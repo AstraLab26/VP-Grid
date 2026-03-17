@@ -119,7 +119,7 @@ input double DailyProfitTargetUSD = 1000.0;    // Daily target (USD): sum of pro
 //+------------------------------------------------------------------+
 input group "=== 8. TRADING HOURS ==="
 input bool EnableTradingHours = true;          // Only run EA during the time window; outside window EA waits for next start
-input int TradingStartHour = 7;                // Start hour (server time)
+input int TradingStartHour = 8;                // Start hour (server time)
 input int TradingStartMinute = 0;              // Start minute (server time)
 input int TradingEndHour = 16;                 // End hour (server time)
 input int TradingEndMinute = 0;                // End minute (server time)
