@@ -161,6 +161,25 @@ Mặc định hiện tại: `EnableTradingHours = false`.
 
 Mặc định hiện tại: `EnableADXStartFilter = false`, `ADXTimeframe = M15`, `ADXPeriod = 14`, `ADXStartThreshold = 25`.
 
+### 10) RE-ARM DELAY (after TP)
+- **RearmDelayMinutesAA/BB/CC/DD**
+
+**Nguyên tắc**:
+- Khi 1 lệnh **đóng bằng TP** tại bậc nào thì EA sẽ **delay đặt lại** virtual pending đúng **(loại + bậc)** đó trong X phút.
+- Các bậc khác vẫn đặt lại bình thường.
+
+Mặc định hiện tại: `RearmDelayMinutesAA/BB/CC/DD = 10`.
+
+### 11) SESSION RESET (profit target)
+- **EnableSessionProfitReset**
+- **SessionProfitTargetUSD**
+
+**Nguyên tắc**:
+- Khi **không** ở `gongLaiMode`, nếu \( (Balance - sessionStartBalance) + floating \) đạt ngưỡng thì EA **Reset** (đóng hết, đặt base mới, đặt lại lưới).
+- Nếu `gongLaiMode` đang kích hoạt thì **không áp dụng** reset theo ngưỡng phiên.
+
+Mặc định hiện tại: `EnableSessionProfitReset = false`, `SessionProfitTargetUSD = 500`.
+
 ## Ví dụ cấu hình
 
 > Lưu ý: đây là ví dụ để bạn tham khảo logic. Bạn vẫn cần tự tối ưu theo sản phẩm, spread, margin, và mức chịu DD.
