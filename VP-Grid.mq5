@@ -26,8 +26,8 @@ enum ENUM_TRAILING_DROP_MODE { TRAILING_MODE_LOCK = 0,      // Lock: profit drop
 //| 1. GRID                                                           |
 //+------------------------------------------------------------------+
 input group "=== 1. GRID ==="
-input double GridDistancePips = 2000.0;         // Grid distance (pips)
-input int MaxGridLevels = 50;                   // Max grid levels per side (above/below base line)
+input double GridDistancePips = 1000.0;         // Grid distance (pips)
+input int MaxGridLevels = 100;                  // Max grid levels per side (above/below base line)
 
 //+------------------------------------------------------------------+
 //| 2. ORDERS                                                          |
@@ -36,53 +36,53 @@ input group "=== 2. ORDERS (virtual pending - no broker pending orders) ==="
 
 input group "--- 2.1 Common (Magic & Comment) ---"
 input int MagicNumber = 123456;                // Magic Number (AA=this, BB=this+1, CC=this+2, DD=this+3)
-input string CommentOrder = "VP-Grid";           // Order comment (used for all market orders)
+input string CommentOrder = "VPGrid";           // Order comment (used for all market orders)
 
 input group "--- 2.2 AA (virtual): BUY above base + SELL below base ---"
 input bool EnableAA = true;                     // AA: above base = virtual Buy (Buy Stop); below base = virtual Sell (Sell Stop)
-input double LotSizeAA = 0.05;                  // AA: Lot size level 1
+input double LotSizeAA = 0.01;                  // AA: Lot size level 1
 input ENUM_LOT_SCALE AALotScale = LOT_GEOMETRIC; // AA: Fixed / Geometric
-input double LotMultAA = 1.2;                   // AA: Lot multiplier for level 2+ (Geometric)
+input double LotMultAA = 1.3;                   // AA: Lot multiplier for level 2+ (Geometric)
 input double MaxLotAA = 2.0;                    // AA: Max lot per order (0=no limit)
 input double TakeProfitPipsAA = 0.0;           // AA: Take profit (pips; 0=off)
 input bool EnableBalanceAAByBB = true;         // AA: Balance when (pool + loss) >= 20 USD; cooldown 300s. Prepare at 3 levels, execute at 5
 
 input group "--- 2.3 BB (virtual): BUY above base + SELL below base ---"
 input bool EnableBB = true;                     // BB: above base = virtual Buy; below base = virtual Sell
-input double LotSizeBB = 0.05;                  // BB: Lot size level 1
+input double LotSizeBB = 0.01;                  // BB: Lot size level 1
 input ENUM_LOT_SCALE BBLotScale = LOT_GEOMETRIC; // BB: Fixed / Geometric
-input double LotMultBB = 1.2;                   // BB: Lot multiplier for level 2+ (Geometric)
+input double LotMultBB = 1.3;                   // BB: Lot multiplier for level 2+ (Geometric)
 input double MaxLotBB = 2.0;                    // BB: Max lot per order (0=no limit)
-input double TakeProfitPipsBB = 2000.0;         // BB: Take profit (pips; 0=off)
+input double TakeProfitPipsBB = 1000.0;         // BB: Take profit (pips; 0=off)
 input bool EnableBalanceBB = true;              // BB: Balance when (pool + loss) >= 20 USD; cooldown 300s. Prepare at 3 levels, execute at 5
 
 input group "--- 2.4 CC (virtual): BUY above base + SELL below base ---"
 input bool EnableCC = true;                      // CC: above base = virtual Buy; below base = virtual Sell
-input double LotSizeCC = 0.05;                    // CC: Lot size level 1
+input double LotSizeCC = 0.01;                    // CC: Lot size level 1
 input ENUM_LOT_SCALE CCLotScale = LOT_FIXED;     // CC: Fixed / Geometric
 input double LotMultCC = 1.1;                    // CC: Lot multiplier for level 2+ (Geometric)
 input double MaxLotCC = 2.0;                     // CC: Max lot per order (0=no limit)
-input double TakeProfitPipsCC = 2000.0;          // CC: Take profit (pips; 0=off)
+input double TakeProfitPipsCC = 1000.0;          // CC: Take profit (pips; 0=off)
 input bool EnableBalanceCC = true;               // CC: Balance when (pool + loss) >= 20 USD; cooldown 300s. Prepare at 3 levels, execute at 5
 
 input group "--- 2.5 DD (virtual): SELL above base + BUY below base ---"
-input bool EnableDD = true;                       // DD: above base = virtual Sell (Sell Limit); below base = virtual Buy (Buy Limit); no balance
+input bool EnableDD = false;                      // DD: above base = virtual Sell (Sell Limit); below base = virtual Buy (Buy Limit); no balance
 input double LotSizeDD = 0.01;                   // DD: Lot size level 1
 input ENUM_LOT_SCALE DDLotScale = LOT_FIXED;      // DD: Fixed / Geometric
 input double LotMultDD = 1.3;                    // DD: Lot multiplier for level 2+ (Geometric)
 input double MaxLotDD = 0.01;                    // DD: Max lot per order (0=no limit)
-input double TakeProfitPipsDD = 2000.0;          // DD: Take profit (pips; 0=off)
+input double TakeProfitPipsDD = 1000.0;          // DD: Take profit (pips; 0=off)
 
 //+------------------------------------------------------------------+
 //| 3. SESSION: Trailing profit (open orders only)                    |
 //+------------------------------------------------------------------+
 input group "=== 3. SESSION: Trailing profit ==="
 input bool EnableTrailingTotalProfit = true;    // Enable trailing: cancel pending, move SL when open profit >= threshold
-input double TrailingThresholdUSD = 200.0;       // Start trailing when open profit >= (USD)
+input double TrailingThresholdUSD = 50.0;       // Start trailing when open profit >= (USD)
 input ENUM_TRAILING_DROP_MODE TrailingDropMode = TRAILING_MODE_RETURN;  // When profit drops: Lock profit | Return to initial
 input double TrailingDropPct = 20.0;           // % (both modes): trigger when profit drops X%. E.g., threshold 100 -> trigger at 80
-input double TrailingPointAPips = 1500.0;       // Point A (pips): base = grid level closest to price at threshold
-input double GongLaiStepPips = 1000.0;          // Pips: trailing step (price moves 1 step -> SL trails 1 step)
+input double TrailingPointAPips = 1000.0;       // Point A (pips): base = grid level closest to price at threshold
+input double GongLaiStepPips = 500.0;          // Pips: trailing step (price moves 1 step -> SL trails 1 step)
 
 //+------------------------------------------------------------------+
 //| 4. CAPITAL % SCALING                                               |
@@ -111,18 +111,36 @@ input double LockProfitPct = 25.0;             // Lock this % of each profitable
 //| 7. DAILY STOP                                                      |
 //+------------------------------------------------------------------+
 input group "=== 7. DAILY STOP ==="
-input bool EnableDailyStop = true;             // Stop EA for the rest of day when daily reset-profit >= target
-input double DailyProfitTargetUSD = 1000.0;    // Daily target (USD): sum of profit/loss per RESET in the day
+input bool EnableDailyStop = false;            // Stop EA for the rest of day when daily reset-profit >= target
+input double DailyProfitTargetUSD = 500.0;     // Daily target (USD): sum of profit/loss per RESET in the day
 
 //+------------------------------------------------------------------+
 //| 8. TRADING HOURS                                                   |
 //+------------------------------------------------------------------+
 input group "=== 8. TRADING HOURS ==="
-input bool EnableTradingHours = true;          // Only run EA during the time window; outside window EA waits for next start
+input bool EnableTradingHours = false;         // Only run EA during the time window; outside window EA waits for next start
 input int TradingStartHour = 8;                // Start hour (server time)
 input int TradingStartMinute = 0;              // Start minute (server time)
 input int TradingEndHour = 16;                 // End hour (server time)
 input int TradingEndMinute = 0;                // End minute (server time)
+
+//+------------------------------------------------------------------+
+//| 9. START FILTER (ADX)                                              |
+//+------------------------------------------------------------------+
+input group "=== 9. START FILTER (ADX) ==="
+input bool EnableADXStartFilter = false;       // Start EA (set base & place grid) only when ADX is below the threshold
+input ENUM_TIMEFRAMES ADXTimeframe = PERIOD_M15; // ADX timeframe
+input int ADXPeriod = 14;                      // ADX period
+input double ADXStartThreshold = 25.0;         // Start when ADX < this value
+
+//+------------------------------------------------------------------+
+//| 10. RE-ARM DELAY (after TP)                                       |
+//+------------------------------------------------------------------+
+input group "=== 10. RE-ARM DELAY (after TP) ==="
+input int RearmDelayMinutesAA = 10;            // AA: minutes to wait before re-placing the same level after a TP close (0=off)
+input int RearmDelayMinutesBB = 10;            // BB: minutes to wait before re-placing the same level after a TP close (0=off)
+input int RearmDelayMinutesCC = 10;            // CC: minutes to wait before re-placing the same level after a TP close (0=off)
+input int RearmDelayMinutesDD = 10;            // DD: minutes to wait before re-placing the same level after a TP close (0=off)
 
 //--- Global variables
 CTrade trade;
@@ -166,6 +184,8 @@ int dailyStopDayKey = 0;                      // yyyymmdd when daily target was 
 double dailyResetProfit = 0.0;                // Cumulative sum of (balanceNow - sessionStartBalance) per RESET across days, until target is reached
 bool eaStoppedBySchedule = false;             // true = EA is stopped due to trading hours (wait until next start)
 bool scheduleStopPending = false;             // true = end time passed while running; stop at next reset
+bool eaStoppedByAdx = false;                  // true = EA is waiting for ADX < threshold to start
+int adxHandle = INVALID_HANDLE;               // iADX handle (for start filter)
 int MagicAA = 0;                              // AA orders magic (set in OnInit)
 int MagicBB = 0;                              // BB orders magic (MagicNumber+1)
 int MagicCC = 0;                              // CC orders magic (MagicNumber+2)
@@ -191,6 +211,14 @@ struct VirtualPendingEntry
    double            lot;
 };
 VirtualPendingEntry g_virtualPending[];
+
+struct RearmBlock
+{
+   long     magic;
+   int      levelNum;    // +1..+N or -1..-N
+   datetime until;
+};
+RearmBlock g_rearmBlocks[];
 
 //+------------------------------------------------------------------+
 //| True if magic belongs to this EA (AA, BB or CC)                    |
@@ -218,6 +246,79 @@ int DateKey(datetime t)
 
 int ClampInt(int v, int lo, int hi) { return (v < lo) ? lo : ((v > hi) ? hi : v); }
 
+string StrategyTagFromMagic(long magic)
+{
+   if(magic == MagicAA) return "AA";
+   if(magic == MagicBB) return "BB";
+   if(magic == MagicCC) return "CC";
+   if(magic == MagicDD) return "DD";
+   return "UNK";
+}
+
+int RearmDelaySecondsForMagic(long magic)
+{
+   int m = 0;
+   if(magic == MagicAA) m = RearmDelayMinutesAA;
+   else if(magic == MagicBB) m = RearmDelayMinutesBB;
+   else if(magic == MagicCC) m = RearmDelayMinutesCC;
+   else if(magic == MagicDD) m = RearmDelayMinutesDD;
+   m = MathMax(0, m);
+   return m * 60;
+}
+
+int FindRearmBlockIndex(long magic, int levelNum)
+{
+   for(int i = 0; i < ArraySize(g_rearmBlocks); i++)
+      if(g_rearmBlocks[i].magic == magic && g_rearmBlocks[i].levelNum == levelNum)
+         return i;
+   return -1;
+}
+
+void SetRearmBlock(long magic, int levelNum, datetime until)
+{
+   int idx = FindRearmBlockIndex(magic, levelNum);
+   if(idx >= 0)
+   {
+      g_rearmBlocks[idx].until = until;
+      return;
+   }
+   int n = ArraySize(g_rearmBlocks);
+   ArrayResize(g_rearmBlocks, n + 1);
+   g_rearmBlocks[n].magic = magic;
+   g_rearmBlocks[n].levelNum = levelNum;
+   g_rearmBlocks[n].until = until;
+}
+
+bool IsRearmBlocked(long magic, int levelNum)
+{
+   int idx = FindRearmBlockIndex(magic, levelNum);
+   if(idx < 0) return false;
+   return (g_rearmBlocks[idx].until > TimeCurrent());
+}
+
+bool TryParseLevelFromComment(const string cmt, int &levelNum)
+{
+   levelNum = 0;
+   int p = StringFind(cmt, "|L");
+   if(p < 0) return false;
+   string s = StringSubstr(cmt, p + 2); // after "|L"
+   int end = StringFind(s, "|");
+   if(end >= 0) s = StringSubstr(s, 0, end);
+   StringTrimLeft(s);
+   StringTrimRight(s);
+   if(StringLen(s) < 2) return false; // expect +1/-1...
+   int v = (int)StringToInteger(s);
+   if(v == 0) return false;
+   levelNum = v;
+   return true;
+}
+
+string BuildOrderCommentWithLevel(long magic, int levelNum)
+{
+   // Example: "VP-Grid|AA|L+1"
+   return "VP-Grid|" + StrategyTagFromMagic(magic) + "|L" + (levelNum > 0 ? "+" : "") + IntegerToString(levelNum);
+}
+
 // Trading window check (server time). Assumes start < end within the same day.
 bool IsWithinTradingHours(datetime t)
 {
@@ -239,6 +340,32 @@ bool IsWithinTradingHours(datetime t)
       return (nowMin >= startMin && nowMin < endMin);
    // If user sets a cross-midnight window, treat it as "run outside the gap"
    return (nowMin >= startMin || nowMin < endMin);
+}
+
+bool GetADXValue(double &adxValue)
+{
+   adxValue = 0.0;
+   if(!EnableADXStartFilter)
+      return true;
+   if(adxHandle == INVALID_HANDLE)
+      return false;
+   double buf[];
+   ArraySetAsSeries(buf, true);
+   // Use last closed bar (shift=1) for stability
+   if(CopyBuffer(adxHandle, 0, 1, 1, buf) != 1)
+      return false;
+   adxValue = buf[0];
+   return true;
+}
+
+bool IsADXStartAllowed()
+{
+   if(!EnableADXStartFilter)
+      return true;
+   double adx = 0.0;
+   if(!GetADXValue(adx))
+      return false; // no data -> do not start yet
+   return (adx < ADXStartThreshold);
 }
 
 void ResetDailyStopState()
@@ -279,12 +406,22 @@ void CheckDailyRolloverAndAutoRestart()
       }
       else
       {
-         basePrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-         InitializeGridLevels();
-         ManageGridOrders();   // start placing grid immediately
-         if(EnableResetNotification)
-            SendResetNotification("Daily stop: new day restart (cycle reset)");
-         Print("Daily stop: new day restart (cycle reset). New base = ", basePrice);
+         if(!IsADXStartAllowed())
+         {
+            eaStoppedByAdx = true;
+            if(EnableResetNotification || EnableTelegram)
+               SendResetNotification("New day: waiting for ADX start condition");
+            Print("New day: inside trading hours but ADX condition not met. EA will wait.");
+         }
+         else
+         {
+            basePrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+            InitializeGridLevels();
+            ManageGridOrders();   // start placing grid immediately
+            if(EnableResetNotification)
+               SendResetNotification("Daily stop: new day restart (cycle reset)");
+            Print("Daily stop: new day restart (cycle reset). New base = ", basePrice);
+         }
       }
    }
 }
@@ -340,14 +477,46 @@ void CheckTradingHoursAndAutoRestart()
    {
       eaStoppedBySchedule = false;
       scheduleStopPending = false;
-      basePrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-      InitializeGridLevels();
-      ManageGridOrders();
-      if(EnableResetNotification)
-         SendResetNotification("Trading hours: start window restart");
-      Print("Trading hours: start window reached. Restart EA, new base = ", basePrice);
+      if(!IsADXStartAllowed())
+      {
+         eaStoppedByAdx = true;
+         if(EnableResetNotification || EnableTelegram)
+            SendResetNotification("Trading hours started: waiting for ADX start condition");
+         Print("Trading hours started but ADX condition not met. EA will wait.");
+      }
+      else
+      {
+         basePrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+         InitializeGridLevels();
+         ManageGridOrders();
+         if(EnableResetNotification)
+            SendResetNotification("Trading hours: start window restart");
+         Print("Trading hours: start window reached. Restart EA, new base = ", basePrice);
+      }
    }
    lastWithin = within;
+}
+
+void CheckADXStartAndAutoRestart()
+{
+   if(!EnableADXStartFilter)
+      return;
+   if(!eaStoppedByAdx)
+      return;
+   if(eaStoppedByTarget)
+      return;
+   if(EnableTradingHours && !IsWithinTradingHours(TimeCurrent()))
+      return;
+   // ADX condition met -> start
+   if(!IsADXStartAllowed())
+      return;
+   eaStoppedByAdx = false;
+   basePrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   InitializeGridLevels();
+   ManageGridOrders();
+   if(EnableResetNotification || EnableTelegram)
+      SendResetNotification("ADX start condition met: EA started");
+   Print("ADX start condition met. Restart EA, new base = ", basePrice);
 }
 
 // Call this at RESET points to stop the EA if end time has passed (stop pending).
@@ -469,7 +638,7 @@ void ProcessVirtualPendingExecutions()
       if(!trigger) continue;
 
       trade.SetExpertMagicNumber(e.magic);
-      string cmt = CommentOrder;
+      string cmt = BuildOrderCommentWithLevel(e.magic, e.levelNum);
       bool ok = false;
       double sl = 0.0;
       double tp = e.tpPrice;
@@ -478,7 +647,7 @@ void ProcessVirtualPendingExecutions()
       else
          ok = trade.Sell(e.lot, _Symbol, 0.0, sl, tp, cmt);
       if(ok)
-         Print("VP-Grid -> market: ", EnumToString(e.orderType), " magic ", e.magic, " lot ", e.lot, " at level ", e.priceLevel);
+         Print("VP-Grid -> market: ", EnumToString(e.orderType), " magic ", e.magic, " lot ", e.lot, " at level ", e.priceLevel, " (", cmt, ")");
       else
          Print("VP-Grid execute fail: ", EnumToString(e.orderType), " err ", GetLastError());
       VirtualPendingRemoveAt(i);
@@ -521,6 +690,15 @@ int OnInit()
    eaStoppedByTarget = false;
    eaStoppedBySchedule = false;
    scheduleStopPending = false;
+   eaStoppedByAdx = false;
+
+   if(EnableADXStartFilter)
+   {
+      int per = MathMax(2, ADXPeriod);
+      adxHandle = iADX(_Symbol, ADXTimeframe, per);
+      if(adxHandle == INVALID_HANDLE)
+         Print("VP-Grid: failed to create ADX handle. err=", GetLastError());
+   }
    balanceGoc = (BaseCapitalUSD > 0) ? BaseCapitalUSD : AccountInfoDouble(ACCOUNT_BALANCE);
    attachBalance = AccountInfoDouble(ACCOUNT_BALANCE);   // Initial capital: balance when EA is first added (for panel only)
    sessionMultiplier = 1.0;
@@ -547,6 +725,14 @@ int OnInit()
       if(EnableResetNotification)
          SendResetNotification("Trading hours: waiting for start window");
       Print("Trading hours: outside window at init. EA will wait for start time.");
+      return(INIT_SUCCEEDED);
+   }
+   if(!IsADXStartAllowed())
+   {
+      eaStoppedByAdx = true;
+      if(EnableResetNotification || EnableTelegram)
+         SendResetNotification("ADX filter: waiting for ADX < threshold to start");
+      Print("ADX filter: ADX condition not met at init. EA will wait.");
       return(INIT_SUCCEEDED);
    }
    InitializeGridLevels();
@@ -586,6 +772,11 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
+   if(adxHandle != INVALID_HANDLE)
+   {
+      IndicatorRelease(adxHandle);
+      adxHandle = INVALID_HANDLE;
+   }
    if(EnableResetNotification || EnableTelegram)
    {
       UpdateSessionStatsForNotification();
@@ -601,7 +792,8 @@ void OnTick()
 {
    CheckDailyRolloverAndAutoRestart();
    CheckTradingHoursAndAutoRestart();
-   if(eaStoppedByTarget || eaStoppedBySchedule)
+   CheckADXStartAndAutoRestart();
+   if(eaStoppedByTarget || eaStoppedBySchedule || eaStoppedByAdx)
       return;
 
    ProcessVirtualPendingExecutions();   // Virtual pendings: trigger -> market before trailing/balance logic
@@ -691,11 +883,19 @@ void OnTick()
                   lastSellTrailPrice = 0.0;
                   ClearBalanceSelection();
                   balancePrepareDirection = 0;
+                  if(!IsADXStartAllowed())
+                  {
+                     eaStoppedByAdx = true;
+                     Print("Trailing profit reset: ADX condition not met. EA will wait to restart.");
+                     if(EnableResetNotification || EnableTelegram)
+                        SendResetNotification("Reset done: waiting for ADX start condition");
+                     return;
+                  }
                   basePrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
                   InitializeGridLevels();
                   Print("Trailing profit: lock (SL not placed, profit ", totalForTrailing, " USD <= drop ", dropLevel, "). Reset EA, new session.");
                   if(EnableResetNotification) { SendResetNotification("Trailing profit"); double b = AccountInfoDouble(ACCOUNT_BALANCE); sessionPeakBalance = b; sessionMinBalance = b; sessionMaxSingleLot = 0; sessionTotalLotAtMaxLot = 0; }
-                  if(!eaStoppedByTarget && !eaStoppedBySchedule)
+                  if(!eaStoppedByTarget && !eaStoppedBySchedule && !eaStoppedByAdx)
                      ManageGridOrders();
                   return;
                }
@@ -742,14 +942,22 @@ void OnTick()
          sessionPeakProfit = 0.0;
          ClearBalanceSelection();
          balancePrepareDirection = 0;
+         if(!IsADXStartAllowed())
+         {
+            eaStoppedByAdx = true;
+            Print("Trailing SL reset: ADX condition not met. EA will wait to restart.");
+            if(EnableResetNotification || EnableTelegram)
+               SendResetNotification("Reset done: waiting for ADX start condition");
+            return;
+         }
          basePrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
          InitializeGridLevels();
          Print("Trailing: SL hit, all positions closed. EA reset, new base = ", basePrice, ". Placing orders again.");
          if(EnableResetNotification) { SendResetNotification("Trailing profit (SL hit)"); double b = AccountInfoDouble(ACCOUNT_BALANCE); sessionPeakBalance = b; sessionMinBalance = b; sessionMaxSingleLot = 0; sessionTotalLotAtMaxLot = 0; }
-         if(!eaStoppedByTarget && !eaStoppedBySchedule)
+         if(!eaStoppedByTarget && !eaStoppedBySchedule && !eaStoppedByAdx)
             ManageGridOrders();
          else
-            return;  // daily stop reached on reset -> stop for the rest of day
+            return;  // stopped (daily/schedule/adx) -> wait
       }
       else
          DoGongLaiTrailing();
@@ -923,6 +1131,16 @@ void SendResetNotification(const string reason)
          msg += "Trading hours: EA is WAITING for next start\n";
       else if(scheduleStopPending)
          msg += "Trading hours: stop pending (will stop on next reset)\n";
+   }
+   if(EnableADXStartFilter)
+   {
+      double adx = 0.0;
+      bool ok = GetADXValue(adx);
+      msg += "ADX start filter: < " + DoubleToString(ADXStartThreshold, 1) + " (";
+      msg += ok ? DoubleToString(adx, 2) : "n/a";
+      msg += ")\n";
+      if(eaStoppedByAdx)
+         msg += "ADX filter: EA is WAITING for ADX condition\n";
    }
    msg += "Locked profit (saved, cumulative): " + DoubleToString(lockedProfitReserve, 2) + " USD\n\n";
    msg += "--- FREE EA ---\n";
@@ -1314,6 +1532,24 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
    // Only count closes by TP (Take Profit). Closes by SL / manual / stop out do not add to balance pool.
    if(HistoryDealGetInteger(trans.deal, DEAL_REASON) != DEAL_REASON_TP)
       return;
+
+   // Re-arm delay: when a TP close happens, block re-placing the same strategy+level for X minutes.
+   {
+      long dealMagic0 = HistoryDealGetInteger(trans.deal, DEAL_MAGIC);
+      int delaySec = RearmDelaySecondsForMagic(dealMagic0);
+      if(delaySec > 0)
+      {
+         string cmt = HistoryDealGetString(trans.deal, DEAL_COMMENT);
+         int levelNum = 0;
+         if(TryParseLevelFromComment(cmt, levelNum))
+         {
+            datetime until = TimeCurrent() + delaySec;
+            SetRearmBlock(dealMagic0, levelNum, until);
+            Print("VP-Grid re-arm delay: ", StrategyTagFromMagic(dealMagic0), " L", (levelNum > 0 ? "+" : ""), levelNum,
+                  " blocked until ", TimeToString(until, TIME_DATE|TIME_MINUTES));
+         }
+      }
+   }
    
    // Closed deal P/L = profit + swap + commission (TP closes in session only)
    double dealPnL = HistoryDealGetDouble(trans.deal, DEAL_PROFIT)
@@ -1535,6 +1771,7 @@ double GetTakeProfitPipsDD()
 void InitializeGridLevels()
 {
    VirtualPendingClear();
+   ArrayResize(g_rearmBlocks, 0);
    // Current session = 0 and start counting from here (called when EA attached or EA auto reset)
    sessionStartTime = TimeCurrent();
    double bal = AccountInfoDouble(ACCOUNT_BALANCE);
@@ -1919,6 +2156,8 @@ void ManageGridOrders()
 //+------------------------------------------------------------------+
 void EnsureOrderAtLevel(ENUM_ORDER_TYPE orderType, double priceLevel, int levelNum)
 {
+   if(IsRearmBlocked(MagicAA, levelNum))
+      return;
    ulong  ticket       = 0;
    double existingPrice = 0.0;
    if(GetPendingOrderAtLevel(orderType, priceLevel, ticket, existingPrice, MagicAA))
@@ -1940,6 +2179,8 @@ void EnsureOrderAtLevel(ENUM_ORDER_TYPE orderType, double priceLevel, int levelN
 //+------------------------------------------------------------------+
 void EnsureOrderAtLevelBB(bool isBuyStop, double priceLevel, int levelNum)
 {
+   if(IsRearmBlocked(MagicBB, levelNum))
+      return;
    ulong ticket = 0;
    double existingPrice = 0.0;
    if(GetPendingOrderAtLevel(isBuyStop ? ORDER_TYPE_BUY_STOP : ORDER_TYPE_SELL_STOP, priceLevel, ticket, existingPrice, MagicBB))
@@ -1961,6 +2202,8 @@ void EnsureOrderAtLevelBB(bool isBuyStop, double priceLevel, int levelNum)
 //+------------------------------------------------------------------+
 void EnsureOrderAtLevelCC(bool isBuyStop, double priceLevel, int levelNum)
 {
+   if(IsRearmBlocked(MagicCC, levelNum))
+      return;
    ulong ticket = 0;
    double existingPrice = 0.0;
    if(GetPendingOrderAtLevel(isBuyStop ? ORDER_TYPE_BUY_STOP : ORDER_TYPE_SELL_STOP, priceLevel, ticket, existingPrice, MagicCC))
@@ -1982,6 +2225,8 @@ void EnsureOrderAtLevelCC(bool isBuyStop, double priceLevel, int levelNum)
 //+------------------------------------------------------------------+
 void EnsureOrderAtLevelDD(bool sellAboveBase, double priceLevel, int levelNum)
 {
+   if(IsRearmBlocked(MagicDD, levelNum))
+      return;
    ulong ticket = 0;
    double existingPrice = 0.0;
    ENUM_ORDER_TYPE ot = sellAboveBase ? ORDER_TYPE_SELL_LIMIT : ORDER_TYPE_BUY_LIMIT;
