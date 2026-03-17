@@ -161,8 +161,9 @@ double globalMaxSingleLot = 0.0;              // Largest single lot since EA att
 double globalTotalLotAtMaxLot = 0.0;          // Total open lot at that time since EA attach (not reset)
 datetime sessionStartTime = 0;                // Current session: starts when EA attached or EA reset. Only P/L and orders from this time.
 double sessionStartBalance = 0.0;             // Balance at session start (for info panel and session %)
-int dailyKey = 0;                             // yyyymmdd (server time)
-double dailyResetProfit = 0.0;                // Sum of (balanceNow - sessionStartBalance) per reset in current day
+int dailyKey = 0;                             // yyyymmdd (server time) - last seen day key
+int dailyStopDayKey = 0;                      // yyyymmdd when daily target was reached (EA stops for that day)
+double dailyResetProfit = 0.0;                // Cumulative sum of (balanceNow - sessionStartBalance) per RESET across days, until target is reached
 bool eaStoppedBySchedule = false;             // true = EA is stopped due to trading hours (wait until next start)
 bool scheduleStopPending = false;             // true = end time passed while running; stop at next reset
 int MagicAA = 0;                              // AA orders magic (set in OnInit)
@@ -243,10 +244,13 @@ bool IsWithinTradingHours(datetime t)
 void ResetDailyStopState()
 {
    dailyKey = DateKey(TimeCurrent());
+   dailyStopDayKey = 0;
    dailyResetProfit = 0.0;
 }
 
-// If a new day starts: reset daily counters. If EA was stopped by daily target, auto restart and set new base.
+// If a new day starts:
+// - If EA is NOT stopped by daily target: keep accumulating (do NOT reset dailyResetProfit).
+// - If EA IS stopped by daily target: keep it stopped for the rest of that day; only clear on the NEXT day.
 void CheckDailyRolloverAndAutoRestart()
 {
    if(!EnableDailyStop)
@@ -258,18 +262,20 @@ void CheckDailyRolloverAndAutoRestart()
       return;
    // New day
    dailyKey = k;
-   dailyResetProfit = 0.0;
-   if(eaStoppedByTarget)
+   // If we reached daily target on a previous day, only allow restart from the next day onward.
+   if(eaStoppedByTarget && dailyStopDayKey > 0 && k > dailyStopDayKey)
    {
-      // New day ALWAYS clears the daily stop.
+      // New day after a stop: clear stop and reset the accumulator for a new cycle.
       eaStoppedByTarget = false;
+      dailyStopDayKey = 0;
+      dailyResetProfit = 0.0;
       // Only restart immediately if we are inside trading hours. Otherwise, keep waiting for the next start window.
       if(EnableTradingHours && !IsWithinTradingHours(TimeCurrent()))
       {
          eaStoppedBySchedule = true;
          if(EnableResetNotification || EnableTelegram)
-            SendResetNotification("New day: daily stop cleared, waiting for trading hours start");
-         Print("New day: daily stop cleared, but outside trading hours. EA will wait for start window.");
+            SendResetNotification("New day: daily target cycle reset, waiting for trading hours start");
+         Print("New day: daily target cycle reset, but outside trading hours. EA will wait for start window.");
       }
       else
       {
@@ -277,8 +283,8 @@ void CheckDailyRolloverAndAutoRestart()
          InitializeGridLevels();
          ManageGridOrders();   // start placing grid immediately
          if(EnableResetNotification)
-            SendResetNotification("Daily stop: new day restart");
-         Print("Daily stop: new day detected. Restart EA, new base = ", basePrice);
+            SendResetNotification("Daily stop: new day restart (cycle reset)");
+         Print("Daily stop: new day restart (cycle reset). New base = ", basePrice);
       }
    }
 }
@@ -295,6 +301,7 @@ void DailyStopOnResetAccumulateAndMaybeStop(const string resetReason)
    if(dailyResetProfit >= DailyProfitTargetUSD)
    {
       eaStoppedByTarget = true;
+      dailyStopDayKey = DateKey(TimeCurrent());
       CancelAllPendingOrders();   // clear any virtual pending
       Print("Daily stop reached: ", dailyResetProfit, " USD >= target ", DailyProfitTargetUSD, ". EA stopped for the rest of day. Reason: ", resetReason);
       if(EnableResetNotification)
@@ -905,7 +912,7 @@ void SendResetNotification(const string reason)
    {
       msg += "Daily reset-profit progress: " + DoubleToString(dailyResetProfit, 2) + " / " + DoubleToString(DailyProfitTargetUSD, 2) + " USD\n";
       if(eaStoppedByTarget)
-         msg += "Daily stop: EA is STOPPED for the rest of day\n";
+         msg += "Daily stop: EA is STOPPED until next day\n";
    }
    if(EnableTradingHours)
    {
