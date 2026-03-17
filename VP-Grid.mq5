@@ -142,6 +142,13 @@ input int RearmDelayMinutesBB = 10;            // BB: minutes to wait before re-
 input int RearmDelayMinutesCC = 10;            // CC: minutes to wait before re-placing the same level after a TP close (0=off)
 input int RearmDelayMinutesDD = 10;            // DD: minutes to wait before re-placing the same level after a TP close (0=off)
 
+//+------------------------------------------------------------------+
+//| 11. SESSION RESET (profit target)                                  |
+//+------------------------------------------------------------------+
+input group "=== 11. SESSION RESET (profit target) ==="
+input bool EnableSessionProfitReset = false;    // Reset EA when (session open + session closed) profit reaches the target; disabled during gongLaiMode
+input double SessionProfitTargetUSD = 500.0;    // Session target (USD)
+
 //--- Global variables
 CTrade trade;
 double pnt;
@@ -801,19 +808,16 @@ void OnTick()
    if(EnableResetNotification)
       UpdateSessionStatsForNotification();
    
-   // Trailing: only count open positions of current session (opened after sessionStartTime)
+   // Floating P/L (current session positions only)
    double floating = 0.0;
-   if(EnableTrailingTotalProfit)
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
-      for(int i = PositionsTotal() - 1; i >= 0; i--)
-      {
-         ulong ticket = PositionGetTicket(i);
-         if(ticket <= 0 || !IsOurMagic(PositionGetInteger(POSITION_MAGIC)) || PositionGetString(POSITION_SYMBOL) != _Symbol)
-            continue;
-         if(sessionStartTime > 0 && (datetime)PositionGetInteger(POSITION_TIME) < sessionStartTime)
-            continue;   // Skip positions opened before current session
-         floating += PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
-      }
+      ulong ticket = PositionGetTicket(i);
+      if(ticket <= 0 || !IsOurMagic(PositionGetInteger(POSITION_MAGIC)) || PositionGetString(POSITION_SYMBOL) != _Symbol)
+         continue;
+      if(sessionStartTime > 0 && (datetime)PositionGetInteger(POSITION_TIME) < sessionStartTime)
+         continue;   // Skip positions opened before current session
+      floating += PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
    }
    double totalForTrailing = floating;
    double effectiveTrailingThreshold = (EnableScaleByAccountGrowth && TrailingThresholdUSD > 0) ? (TrailingThresholdUSD * sessionMultiplier) : TrailingThresholdUSD;
@@ -902,6 +906,57 @@ void OnTick()
                // SL placed: no reset, only trail (DoGongLaiTrailing); reset when price hits SL (posCount=0)
             }
          }
+      }
+   }
+
+   // Session profit reset: (closed + open) in current session reaches target -> reset EA.
+   // Disabled during gongLaiMode.
+   if(!gongLaiMode && EnableSessionProfitReset && SessionProfitTargetUSD > 0)
+   {
+      double balDelta = AccountInfoDouble(ACCOUNT_BALANCE) - sessionStartBalance; // closed P/L in this session (all reasons)
+      double totalSession = balDelta + floating;                                  // closed + open
+      if(totalSession >= SessionProfitTargetUSD)
+      {
+         CloseAllPositionsAndOrders();
+         UpdateSessionMultiplierFromAccountGrowth();
+         DailyStopOnResetAccumulateAndMaybeStop("Session profit target");
+         TradingHoursStopOnResetIfNeeded("Session profit target");
+         lastResetTime = TimeCurrent();
+         sessionClosedProfit = 0.0;
+         sessionLockedProfit = 0.0;
+         sessionClosedProfitBB = 0.0;
+         sessionClosedProfitCC = 0.0;
+         sessionClosedProfitDD = 0.0;
+         lastBalanceBBCloseTime = 0;
+         lastBalanceCCCloseTime = 0;
+         lastBalanceAAByBBCloseTime = 0;
+         sessionPeakProfit = 0.0;
+         gongLaiMode = false;
+         trailingGocBuy = 0.0;
+         trailingGocSell = 0.0;
+         trailingSLPlaced = false;
+         lastBuyTrailPrice = 0.0;
+         lastSellTrailPrice = 0.0;
+         ClearBalanceSelection();
+         balancePrepareDirection = 0;
+
+         if(!IsADXStartAllowed())
+         {
+            eaStoppedByAdx = true;
+            Print("Session target reset: ADX condition not met. EA will wait to restart.");
+            if(EnableResetNotification || EnableTelegram)
+               SendResetNotification("Session target reached: waiting for ADX start condition");
+            return;
+         }
+
+         basePrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+         InitializeGridLevels();
+         Print("Session profit target reached: ", DoubleToString(totalSession, 2), " >= ", DoubleToString(SessionProfitTargetUSD, 2), ". Reset EA, new base = ", basePrice);
+         if(EnableResetNotification || EnableTelegram)
+            SendResetNotification("Session profit target reached - reset");
+         if(!eaStoppedByTarget && !eaStoppedBySchedule && !eaStoppedByAdx)
+            ManageGridOrders();
+         return;
       }
    }
    
