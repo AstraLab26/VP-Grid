@@ -16,7 +16,7 @@ Phiên bản trong file: `2.12`
   - **Lock profit (Save %)**: giữ lại % lợi nhuận TP (không dùng để balance)
   - **Scale theo tăng trưởng vốn**: nhân lot/TP/trailing theo % tăng trưởng so với vốn gốc
   - **Reset session** khi đạt điều kiện (trailing lock / trailing SL hit…)
-  - **Daily stop**: đạt ngưỡng USD trong ngày thì dừng đến hết ngày
+  - **Daily stop**: cộng dồn theo RESET qua nhiều ngày; đạt ngưỡng thì dừng đến hết ngày (restart từ ngày sau)
   - **Trading hours**: chỉ cho EA chạy trong khung giờ; ngoài giờ thì chờ đến giờ bắt đầu
   - Thông báo **Notification** và **Telegram** (tùy chọn)
 
@@ -121,12 +121,15 @@ Mỗi tick, EA kiểm tra nếu giá chạm mức thì vào Market bằng `trade
 
 ### 7) DAILY STOP
 - **EnableDailyStop**
-- **DailyProfitTargetUSD**: ngưỡng USD trong ngày.
+- **DailyProfitTargetUSD**: ngưỡng USD (cộng dồn theo RESET).
 
-**Cách tính Daily stop**:
-- Mỗi lần EA **RESET**, EA cộng dồn \( \Delta = Balance\_{now} - sessionStartBalance \) vào tổng trong ngày.
-- Nếu tổng trong ngày **>= DailyProfitTargetUSD** → EA **dừng đến hết ngày**.
-- Sang **ngày mới** tổng về **0**, EA chỉ chạy lại khi thỏa **Trading hours** (nếu bật).
+**Cách tính Daily stop (cộng dồn qua nhiều ngày)**:
+- Mỗi lần EA **RESET**, EA cộng dồn \( \Delta = Balance\_{now} - sessionStartBalance \) vào bộ đếm.
+- Nếu **chưa đạt ngưỡng**, **sang ngày mới vẫn tiếp tục cộng dồn** (không reset).
+- Chỉ khi bộ đếm **>= DailyProfitTargetUSD** (dù là do cộng dồn từ các ngày trước) → EA **dừng**.
+- Khi EA đã dừng vì đạt ngưỡng:
+  - Dù có vào **giờ chạy** trong **cùng ngày** → EA vẫn **dừng**.
+  - Chỉ **sang ngày kế tiếp** và vào **đúng giờ chạy** (Trading hours) → EA mới được **khởi động lại** và bộ đếm được reset về **0** để bắt đầu chu kỳ mới.
 
 ### 8) TRADING HOURS
 - **EnableTradingHours**
