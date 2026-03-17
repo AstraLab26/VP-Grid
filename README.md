@@ -57,7 +57,10 @@ Ví dụ: **AA level +1** chốt TP xong và `RearmDelayMinutesAA = 10` thì EA 
 
 ### 1) GRID
 - **GridDistancePips**: khoảng cách giữa 2 mức lưới liên tiếp (đơn vị “pips” theo cách EA quy đổi).
-- **MaxGridLevels**: số bậc tối đa mỗi phía (trên + dưới). Tổng mức = `2 * MaxGridLevels`.
+- **MaxGridLevels**: số bậc tối đa mỗi phía khi không cài riêng (mặc định dùng cho cả trên và dưới).
+- **MaxLevelsAboveBase**: bậc lưới tối đa **trên** đường gốc (0 = dùng MaxGridLevels).
+- **MaxLevelsBelowBase**: bậc lưới tối đa **dưới** đường gốc (0 = dùng MaxGridLevels).
+- Tổng mức lưới = số bậc trên + số bậc dưới (theo hai input trên hoặc MaxGridLevels).
 
 ### 2) ORDERS (pending ảo)
 #### 2.1 Common
@@ -179,6 +182,33 @@ Mặc định hiện tại: `RearmDelayMinutesAA/BB/CC/DD = 10`.
 - Nếu `gongLaiMode` đang kích hoạt thì **không áp dụng** reset theo ngưỡng phiên.
 
 Mặc định hiện tại: `EnableSessionProfitReset = false`, `SessionProfitTargetUSD = 500`.
+
+### 12) RESET KHI LEVELS MATCH
+Reset EA khi **đủ đồng thời** 4 điều kiện sau:
+
+1. **Bậc lưới cao nhất trên đường gốc = X bậc** (phiên hiện tại): số bậc xa nhất phía trên có lệnh đạt X (cấu hình bởi **LevelMatchRequiredLevels**).
+2. **Bậc lưới cao nhất dưới đường gốc = X bậc** (phiên hiện tại): số bậc xa nhất phía dưới có lệnh đạt X (cùng tham số X).
+3. **Tổng P/L phiên** (lệnh đóng + lệnh đang mở) của phiên hiện tại ≥ **LevelMatchSessionTargetUSD** (USD).
+4. **Chế độ gồng lãi tổng chưa kích hoạt** (không ở gongLaiMode).
+
+**Input:**
+- **EnableResetWhenLevelsMatch**: bật/tắt chế độ reset này.
+- **LevelMatchRequiredLevels** (X): điều kiện (1) và (2) — bậc cao nhất trên = X, bậc cao nhất dưới = X. 0 = không yêu cầu mức tối thiểu.
+- **LevelMatchSessionTargetUSD**: điều kiện (3) — ngưỡng P/L phiên (USD).
+
+**Ví dụ (X = 5, ngưỡng 200 USD):**
+- Đường gốc = 1.10000, bước lưới = 0.00100 (100 pips).
+- **Trên gốc:** có lệnh mở ở bậc +1, +2, +3, +4, +5 → bậc cao nhất trên = **5**, số lệnh trên = 5 ✓
+- **Dưới gốc:** có lệnh mở ở bậc -1, -2, -3, -4, -5 → bậc cao nhất dưới = **5**, số lệnh dưới = 5 ✓
+- **P/L phiên:** (Balance − balance đầu phiên) + floating = **220 USD** ≥ 200 ✓
+- **Gồng lãi tổng:** chưa kích hoạt ✓  
+→ EA **reset**: đóng hết lệnh/pending, đặt base mới = giá hiện tại, khởi tạo lại lưới.
+
+Nếu thiếu một trong bốn (ví dụ mới có 4 bậc trên, hoặc P/L = 150 USD, hoặc đang gồng lãi) thì **không** reset.
+
+Khi đủ cả 4 điều kiện, EA thực hiện reset (đóng hết, base mới, daily/trading/ADX xử lý như các reset khác).
+
+Mặc định: `EnableResetWhenLevelsMatch = false`, `LevelMatchRequiredLevels = 5`, `LevelMatchSessionTargetUSD = 200`.
 
 ## Ví dụ cấu hình
 
