@@ -33,6 +33,11 @@ Phiên bản trong file: `2.12`
 EA lưu danh sách `g_virtualPending[]` gồm (magic, loại lệnh, mức giá, level, TP, lot).  
 Mỗi tick, EA kiểm tra nếu giá chạm mức thì vào Market bằng `trade.Buy()` / `trade.Sell()`.
 
+### 3) Re-arm delay (sau khi TP)
+Bạn có thể cấu hình thời gian **delay đặt lại** lệnh chờ ảo tại đúng **bậc vừa TP**.
+
+Ví dụ: **AA level +1** chốt TP xong và `RearmDelayMinutesAA = 10` thì EA sẽ **đợi 10 phút** rồi mới đặt lại virtual pending AA tại level +1 (không ảnh hưởng các level khác).
+
 ## Cài đặt & chạy
 
 ### Bước 1: Copy file
@@ -62,6 +67,7 @@ Mỗi tick, EA kiểm tra nếu giá chạm mức thì vào Market bằng `trade
   - CC = `MagicNumber + 2`
   - DD = `MagicNumber + 3`
 - **CommentOrder**: comment gắn cho lệnh Market khi kích hoạt pending ảo.
+  - Mặc định hiện tại: `VPGrid`
 
 #### 2.2 AA (ảo): BUY trên gốc + SELL dưới gốc
 - **EnableAA**: bật/tắt AA
@@ -131,15 +137,29 @@ Mỗi tick, EA kiểm tra nếu giá chạm mức thì vào Market bằng `trade
   - Dù có vào **giờ chạy** trong **cùng ngày** → EA vẫn **dừng**.
   - Chỉ **sang ngày kế tiếp** và vào **đúng giờ chạy** (Trading hours) → EA mới được **khởi động lại** và bộ đếm được reset về **0** để bắt đầu chu kỳ mới.
 
+Mặc định hiện tại: `EnableDailyStop = false`, `DailyProfitTargetUSD = 500`.
+
 ### 8) TRADING HOURS
 - **EnableTradingHours**
-- **TradingStartHour/TradingStartMinute** (mặc định 07:00)
+- **TradingStartHour/TradingStartMinute** (mặc định 08:00)
 - **TradingEndHour/TradingEndMinute** (mặc định 16:00)
 
 **Hành vi theo giờ chạy**:
 - **Ngoài giờ chạy**:
   - Nếu EA **đang dừng** → tiếp tục dừng cho tới khi vào giờ chạy, rồi EA **khởi động** và đặt **basePrice** theo giá lúc đó.
   - Nếu EA **đang chạy dở** mà vượt qua giờ kết thúc → EA **vẫn chạy tiếp**; khi xảy ra **RESET** tiếp theo thì EA mới **dừng**, sau đó chờ phiên sau.
+
+Mặc định hiện tại: `EnableTradingHours = false`.
+
+### 9) START FILTER (ADX)
+- **EnableADXStartFilter**: chỉ cho EA “khởi động” khi ADX < ngưỡng.
+- **ADXTimeframe**, **ADXPeriod**, **ADXStartThreshold**
+
+**Nguyên tắc**:
+- EA **đang chạy** thì vẫn chạy bình thường (không bị tắt).
+- EA **đang dừng/chờ** (đợi giờ chạy hoặc vừa reset) thì chỉ khởi động lại khi **ADX < ADXStartThreshold**.
+
+Mặc định hiện tại: `EnableADXStartFilter = false`, `ADXTimeframe = M15`, `ADXPeriod = 14`, `ADXStartThreshold = 25`.
 
 ## Ví dụ cấu hình
 
@@ -148,19 +168,19 @@ Mỗi tick, EA kiểm tra nếu giá chạm mức thì vào Market bằng `trade
 ### Ví dụ 1 — Lưới lớn, TP nhỏ, chỉ dùng BB/CC
 Mục tiêu: chạy 2 nhóm BB/CC để lấy TP đều, tắt AA/DD.
 
-- `GridDistancePips = 2000`
-- `MaxGridLevels = 50`
+- `GridDistancePips = 1000`
+- `MaxGridLevels = 100`
 - `EnableAA = false`
 - `EnableBB = true`
-  - `LotSizeBB = 0.05`
+  - `LotSizeBB = 0.01`
   - `BBLotScale = LOT_GEOMETRIC`
-  - `LotMultBB = 1.2`
-  - `TakeProfitPipsBB = 2000`
+  - `LotMultBB = 1.3`
+  - `TakeProfitPipsBB = 1000`
   - `EnableBalanceBB = true`
 - `EnableCC = true`
-  - `LotSizeCC = 0.05`
+  - `LotSizeCC = 0.01`
   - `CCLotScale = LOT_FIXED`
-  - `TakeProfitPipsCC = 2000`
+  - `TakeProfitPipsCC = 1000`
   - `EnableBalanceCC = true`
 - `EnableDD = false`
 - `EnableLockProfit = true`, `LockProfitPct = 25`
@@ -170,19 +190,19 @@ Mục tiêu: chạy 2 nhóm BB/CC để lấy TP đều, tắt AA/DD.
 Mục tiêu: DD lot nhỏ, TP đều; AA/BB/CC dùng balance để giảm lệnh lỗ đối diện.
 
 - `EnableAA = true`, `TakeProfitPipsAA = 0`, `EnableBalanceAAByBB = true`
-- `EnableBB = true`, `TakeProfitPipsBB = 2000`, `EnableBalanceBB = true`
-- `EnableCC = true`, `TakeProfitPipsCC = 2000`, `EnableBalanceCC = true`
-- `EnableDD = true`, `LotSizeDD = 0.01`, `MaxLotDD = 0.01`, `TakeProfitPipsDD = 2000`
+- `EnableBB = true`, `TakeProfitPipsBB = 1000`, `EnableBalanceBB = true`
+- `EnableCC = true`, `TakeProfitPipsCC = 1000`, `EnableBalanceCC = true`
+- `EnableDD = true`, `LotSizeDD = 0.01`, `MaxLotDD = 0.01`, `TakeProfitPipsDD = 1000`
 
 ### Ví dụ 3 — Dùng trailing tổng lợi nhuận để “khóa” session
 Mục tiêu: khi tổng floating đạt ngưỡng thì hủy pending, bỏ TP, bắt đầu trailing SL.
 
 - `EnableTrailingTotalProfit = true`
-- `TrailingThresholdUSD = 200`
+- `TrailingThresholdUSD = 50`
 - `TrailingDropMode = TRAILING_MODE_RETURN` (an toàn hơn để thoát trailing nếu chưa kịp đặt SL)
 - `TrailingDropPct = 20`
-- `TrailingPointAPips = 1500`
-- `GongLaiStepPips = 1000`
+- `TrailingPointAPips = 1000`
+- `GongLaiStepPips = 500`
 
 ## Lưu ý quan trọng về “pip” và khoảng cách lưới
 
@@ -221,7 +241,7 @@ Vì EA dùng pending ảo (`g_virtualPending[]`). Khi chạm mức, EA vào lệ
 ### 4) Thông báo có hiển thị tiến độ daily stop và giờ chạy không?
 Có. Trong Notification/Telegram sẽ có:
 - `Daily reset-profit progress: X / Target USD`
-- `Trading hours: 07:00-16:00`
+- `Trading hours: 08:00-16:00`
 - Trạng thái: `WAITING`, hoặc `stop pending (will stop on next reset)` khi vừa hết giờ chạy.
 
 ## Ghi chú hiệu năng (EA nhẹ hơn)
