@@ -27,7 +27,9 @@ enum ENUM_TRAILING_DROP_MODE { TRAILING_MODE_LOCK = 0,      // Lock: profit drop
 //+------------------------------------------------------------------+
 input group "=== 1. GRID ==="
 input double GridDistancePips = 1000.0;         // Grid distance (pips)
-input int MaxGridLevels = 100;                  // Max grid levels per side (above/below base line)
+input int MaxGridLevels = 100;                  // Max grid levels per side when not set below (default)
+input int MaxLevelsAboveBase = 0;              // Max levels above base (0 = use MaxGridLevels)
+input int MaxLevelsBelowBase = 0;               // Max levels below base (0 = use MaxGridLevels)
 
 //+------------------------------------------------------------------+
 //| 2. ORDERS                                                          |
@@ -149,6 +151,14 @@ input group "=== 11. SESSION RESET (profit target) ==="
 input bool EnableSessionProfitReset = false;    // Reset EA when (session open + session closed) profit reaches the target; disabled during gongLaiMode
 input double SessionProfitTargetUSD = 500.0;    // Session target (USD)
 
+//+------------------------------------------------------------------+
+//| 12. RESET WHEN LEVELS MATCH (price above base)                     |
+//+------------------------------------------------------------------+
+input group "=== 12. RESET WHEN LEVELS MATCH ==="
+input bool EnableResetWhenLevelsMatch = false;  // Reset EA when all 4 conditions below are met
+input int LevelMatchRequiredLevels = 5;        // X: (1) max level above base = X, (2) max level below base = X (0 = any)
+input double LevelMatchSessionTargetUSD = 200.0; // (3) Session P/L (closed + open) >= this USD. (4) Trailing total profit mode not active
+
 //--- Global variables
 CTrade trade;
 double pnt;
@@ -156,6 +166,8 @@ int dgt;
 double basePrice;                               // Base price (base line)
 double gridLevels[];                            // Array of level prices (evenly spaced by GridDistancePips)
 double gridStep;                                // One grid step (price) = GridDistancePips, used for tolerance/snap
+int g_maxLevelsAbove = 100;                     // Effective max levels above base (set in InitializeGridLevels)
+int g_maxLevelsBelow = 100;                     // Effective max levels below base (set in InitializeGridLevels)
 // Pool = TP profit in current session minus lock (AA+BB+CC+DD). Used for balance AA/BB/CC only (DD is not balanced).
 double sessionClosedProfit = 0.0;               // Session: (TP profit - lock) in session. Reset on EA reset. Shared balance pool.
 double sessionLockedProfit = 0.0;               // Locked profit in current session. Reset on EA reset.
@@ -959,6 +971,86 @@ void OnTick()
          return;
       }
    }
+
+   // Reset when: price above base, count(positions above) = max level above, count(positions below) = min level below, session P/L >= target. Disabled during gongLaiMode.
+   if(!gongLaiMode && EnableResetWhenLevelsMatch && LevelMatchSessionTargetUSD > 0)
+   {
+      double bidNow = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      if((bidNow > basePrice || bidNow < basePrice) && gridStep > 0)
+      {
+         int countAbove = 0, countBelow = 0;
+         int maxLevelAbove = 0;   // highest level index (1..N) that has at least one position above base
+         int maxLevelBelow = 0;   // highest level index (1..N) that has at least one position below base (farthest from base)
+         for(int i = 0; i < PositionsTotal(); i++)
+         {
+            ulong ticket = PositionGetTicket(i);
+            if(ticket <= 0) continue;
+            if(!IsOurMagic(PositionGetInteger(POSITION_MAGIC)) || PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+            if(sessionStartTime > 0 && (datetime)PositionGetInteger(POSITION_TIME) < sessionStartTime) continue;
+            double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+            if(openPrice > basePrice)
+            {
+               countAbove++;
+               int lev = (int)MathRound((openPrice - basePrice) / gridStep);
+               if(lev < 1) lev = 1;
+               if(lev > maxLevelAbove) maxLevelAbove = lev;
+            }
+            else if(openPrice < basePrice)
+            {
+               countBelow++;
+               int lev = (int)MathRound((basePrice - openPrice) / gridStep);
+               if(lev < 1) lev = 1;
+               if(lev > maxLevelBelow) maxLevelBelow = lev;
+            }
+         }
+         double totalSessionLM = (AccountInfoDouble(ACCOUNT_BALANCE) - sessionStartBalance) + floating;
+         if(maxLevelAbove > 0 && maxLevelBelow > 0
+            && (LevelMatchRequiredLevels <= 0 || (maxLevelAbove >= LevelMatchRequiredLevels && maxLevelBelow >= LevelMatchRequiredLevels))
+            && countAbove == maxLevelAbove && countBelow == maxLevelBelow && totalSessionLM >= LevelMatchSessionTargetUSD)
+         {
+            CloseAllPositionsAndOrders();
+            UpdateSessionMultiplierFromAccountGrowth();
+            DailyStopOnResetAccumulateAndMaybeStop("Levels match + session target");
+            TradingHoursStopOnResetIfNeeded("Levels match + session target");
+            lastResetTime = TimeCurrent();
+            sessionClosedProfit = 0.0;
+            sessionLockedProfit = 0.0;
+            sessionClosedProfitBB = 0.0;
+            sessionClosedProfitCC = 0.0;
+            sessionClosedProfitDD = 0.0;
+            lastBalanceBBCloseTime = 0;
+            lastBalanceCCCloseTime = 0;
+            lastBalanceAAByBBCloseTime = 0;
+            sessionPeakProfit = 0.0;
+            gongLaiMode = false;
+            trailingGocBuy = 0.0;
+            trailingGocSell = 0.0;
+            trailingSLPlaced = false;
+            lastBuyTrailPrice = 0.0;
+            lastSellTrailPrice = 0.0;
+            ClearBalanceSelection();
+            balancePrepareDirection = 0;
+
+            if(!IsADXStartAllowed())
+            {
+               eaStoppedByAdx = true;
+               Print("Level match reset: ADX condition not met. EA will wait to restart.");
+               if(EnableResetNotification || EnableTelegram)
+                  SendResetNotification("Levels match + session target: waiting for ADX start condition");
+               return;
+            }
+
+            basePrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+            InitializeGridLevels();
+            Print("Level match reset: above=", countAbove, " (maxLv=", maxLevelAbove, ") below=", countBelow, " (maxLv=", maxLevelBelow, ") session P/L ", DoubleToString(totalSessionLM, 2), " >= ", DoubleToString(LevelMatchSessionTargetUSD, 2), ". New base = ", basePrice);
+            if(EnableResetNotification || EnableTelegram)
+               SendResetNotification("Levels match + session target reached - reset");
+            if(!eaStoppedByTarget && !eaStoppedBySchedule && !eaStoppedByAdx)
+               ManageGridOrders();
+            return;
+         }
+      }
+   }
    
    if(gongLaiMode)
    {
@@ -1472,7 +1564,7 @@ void DoGongLaiTrailing()
       if(trailingGocBuy <= 0.0)
       {
          int nLevels = ArraySize(gridLevels);
-         for(int i = 0; i < MaxGridLevels && i < nLevels; i++)
+         for(int i = 0; i < g_maxLevelsAbove && i < nLevels; i++)
          {
             double L = gridLevels[i];
             if(L < bid && L > trailingGocBuy)
@@ -1516,7 +1608,7 @@ void DoGongLaiTrailing()
       if(trailingGocSell <= 0.0)
       {
          int nLevels = ArraySize(gridLevels);
-         for(int i = MaxGridLevels; i < nLevels; i++)
+         for(int i = g_maxLevelsAbove; i < nLevels; i++)
          {
             double L = gridLevels[i];
             if(L > ask && (trailingGocSell <= 0.0 || L < trailingGocSell))
@@ -1642,10 +1734,10 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
 //+------------------------------------------------------------------+
 double GetGridLevelPrice(int levelIndex)
 {
-   if(levelIndex < MaxGridLevels)
-      return NormalizeDouble(basePrice + (levelIndex + 1) * gridStep, dgt);   // Above: 1, 2, ... MaxGridLevels steps from base
+   if(levelIndex < g_maxLevelsAbove)
+      return NormalizeDouble(basePrice + (levelIndex + 1) * gridStep, dgt);   // Above: 1, 2, ... g_maxLevelsAbove steps from base
    else
-      return NormalizeDouble(basePrice - (levelIndex - MaxGridLevels + 1) * gridStep, dgt);   // Below: 1, 2, ... MaxGridLevels steps from base
+      return NormalizeDouble(basePrice - (levelIndex - g_maxLevelsAbove + 1) * gridStep, dgt);   // Below: 1, 2, ... g_maxLevelsBelow steps from base
 }
 
 //+------------------------------------------------------------------+
@@ -1833,13 +1925,15 @@ void InitializeGridLevels()
    sessionStartBalance = bal;
    // attachBalance NOT updated here - set once in OnInit (capital when EA first attached)
    gridStep = GridDistancePips * pnt * 10.0;   // One grid step = GridDistancePips pips (even spacing)
-   int totalLevels = MaxGridLevels * 2;
-   
+   g_maxLevelsAbove = (MaxLevelsAboveBase > 0) ? MathMax(1, MaxLevelsAboveBase) : MaxGridLevels;
+   g_maxLevelsBelow = (MaxLevelsBelowBase > 0) ? MathMax(1, MaxLevelsBelowBase) : MaxGridLevels;
+   int totalLevels = g_maxLevelsAbove + g_maxLevelsBelow;
+
    ArrayResize(gridLevels, totalLevels);
-   
+
    for(int i = 0; i < totalLevels; i++)
       gridLevels[i] = GetGridLevelPrice(i);
-   Print("Initialized ", totalLevels, " grid levels (", MaxGridLevels, " above + ", MaxGridLevels, " below base), spacing ", GridDistancePips, " pips");
+   Print("Initialized ", totalLevels, " grid levels (", g_maxLevelsAbove, " above + ", g_maxLevelsBelow, " below base), spacing ", GridDistancePips, " pips");
 }
 
 //+------------------------------------------------------------------+
@@ -1925,7 +2019,7 @@ void RemoveDuplicateOrdersAtLevel()
       for(int L = 0; L < nLevels; L++)
       {
          double priceLevel = gridLevels[L];
-         bool isSellLevel = (L < MaxGridLevels);
+         bool isSellLevel = (L < g_maxLevelsAbove);
          bool isBuy = !isSellLevel;
          int positionCount = 0;
          for(int i = 0; i < PositionsTotal(); i++)
@@ -1995,8 +2089,8 @@ void DoBalanceAll()
    bool priceAboveBase = (bid > basePrice);
    bool priceBelowBase = (bid < basePrice);
    int nLevels = ArraySize(gridLevels);
-   int prepLevels = MathMax(1, MathMin(MaxGridLevels, BALANCE_PREPARE_LEVELS));
-   int execLevels = MathMax(prepLevels, MathMin(MaxGridLevels, BALANCE_EXECUTE_LEVELS));
+   int prepLevels = MathMax(1, MathMin(g_maxLevelsAbove, BALANCE_PREPARE_LEVELS));
+   int execLevels = MathMax(prepLevels, MathMin(g_maxLevelsAbove, BALANCE_EXECUTE_LEVELS));
    int idxPrep = prepLevels - 1;   // e.g. 3 levels -> index 2 above base
    int idxExec = execLevels - 1;   // e.g. 5 levels -> index 4 above base
 
@@ -2024,10 +2118,10 @@ void DoBalanceAll()
    }
    else if(priceBelowBase)
    {
-      int idxPrepBelow = MaxGridLevels + idxPrep;
+      int idxPrepBelow = g_maxLevelsAbove + idxPrep;
       if(nLevels <= idxPrepBelow || bid > gridLevels[idxPrepBelow])
          return;   // not deep enough below base to refresh; keep prepare until cross base
-      int idxExecBelow = MaxGridLevels + idxExec;
+      int idxExecBelow = g_maxLevelsAbove + idxExec;
       if(nLevels <= idxExecBelow || bid > gridLevels[idxExecBelow])
          balancePrepareDirection = -1;
    }
@@ -2037,7 +2131,7 @@ void DoBalanceAll()
       executeZone = true;
    else if(priceBelowBase)
    {
-      int idxExecBelow = MaxGridLevels + idxExec;
+      int idxExecBelow = g_maxLevelsAbove + idxExec;
       if(nLevels > idxExecBelow && bid <= gridLevels[idxExecBelow])
          executeZone = true;
    }
@@ -2179,7 +2273,7 @@ void ManageGridOrders()
    RemoveDuplicateOrdersAtLevel();
    double currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    // --- ABOVE base: AA/BB/CC = virtual Buy | DD = virtual Sell ---
-   for(int levelNum = 1; levelNum <= MaxGridLevels; levelNum++)
+   for(int levelNum = 1; levelNum <= g_maxLevelsAbove; levelNum++)
    {
       int idxAbove = levelNum - 1;
       double levelAbove = gridLevels[idxAbove];
@@ -2192,9 +2286,9 @@ void ManageGridOrders()
       }
    }
    // --- BELOW base: AA/BB/CC = virtual Sell | DD = virtual Buy ---
-   for(int levelNum = 1; levelNum <= MaxGridLevels; levelNum++)
+   for(int levelNum = 1; levelNum <= g_maxLevelsBelow; levelNum++)
    {
-      int idxBelow = MaxGridLevels + levelNum - 1;
+      int idxBelow = g_maxLevelsAbove + levelNum - 1;
       double levelBelow = gridLevels[idxBelow];
       if(levelBelow <= basePrice && levelBelow < currentPrice)
       {
