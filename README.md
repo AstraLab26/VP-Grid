@@ -57,10 +57,7 @@ Ví dụ: **AA level +1** chốt TP xong và `RearmDelayMinutesAA = 10` thì EA 
 
 ### 1) GRID
 - **GridDistancePips**: khoảng cách giữa 2 mức lưới liên tiếp (đơn vị “pips” theo cách EA quy đổi).
-- **MaxGridLevels**: số bậc tối đa mỗi phía khi không cài riêng (mặc định dùng cho cả trên và dưới).
-- **MaxLevelsAboveBase**: bậc lưới tối đa **trên** đường gốc (0 = dùng MaxGridLevels).
-- **MaxLevelsBelowBase**: bậc lưới tối đa **dưới** đường gốc (0 = dùng MaxGridLevels).
-- Tổng mức lưới = số bậc trên + số bậc dưới (theo hai input trên hoặc MaxGridLevels).
+- **MaxGridLevels**: số bậc tối đa **mỗi phía** (trên + dưới). Tổng mức = `2 * MaxGridLevels`.
 
 ### 2) ORDERS (pending ảo)
 #### 2.1 Common
@@ -162,7 +159,20 @@ Mặc định hiện tại: `EnableTradingHours = false`.
 - EA **đang chạy** thì vẫn chạy bình thường (không bị tắt).
 - EA **đang dừng/chờ** (đợi giờ chạy hoặc vừa reset) thì chỉ khởi động lại khi **ADX < ADXStartThreshold**.
 
-Mặc định hiện tại: `EnableADXStartFilter = false`, `ADXTimeframe = M15`, `ADXPeriod = 14`, `ADXStartThreshold = 25`.
+Mặc định hiện tại: `EnableADXStartFilter = false`, `ADXTimeframe = M5`, `ADXPeriod = 14`, `ADXStartThreshold = 20`.
+
+### 9.1) START FILTER (RSI cross)
+- **EnableRSIStartFilter**: chỉ cho EA “khởi động” khi RSI có tín hiệu cắt ngưỡng.
+- **RSITimeframe**, **RSIPeriod**, **RSIUpperCross**, **RSILowerCross**
+
+**Nguyên tắc**:
+- EA **đang chạy** thì vẫn chạy bình thường (không bị tắt).
+- EA **đang dừng/chờ** (đợi giờ chạy hoặc vừa reset) thì chỉ khởi động lại khi:
+  - RSI **cắt lên** `RSIUpperCross` (mặc định 70), **hoặc**
+  - RSI **cắt xuống** `RSILowerCross` (mặc định 30).
+- EA dùng **2 nến đã đóng gần nhất** (shift 2 → shift 1) để xác định “cắt” cho ổn định.
+
+Mặc định hiện tại: `EnableRSIStartFilter = false`, `RSITimeframe = M15`, `RSIPeriod = 14`, `RSIUpperCross = 70`, `RSILowerCross = 30`.
 
 ### 10) RE-ARM DELAY (after TP)
 - **RearmDelayMinutesAA/BB/CC/DD**
@@ -181,7 +191,7 @@ Mặc định hiện tại: `RearmDelayMinutesAA/BB/CC/DD = 10`.
 - Khi **không** ở `gongLaiMode`, nếu \( (Balance - sessionStartBalance) + floating \) đạt ngưỡng thì EA **Reset** (đóng hết, đặt base mới, đặt lại lưới).
 - Nếu `gongLaiMode` đang kích hoạt thì **không áp dụng** reset theo ngưỡng phiên.
 
-Mặc định hiện tại: `EnableSessionProfitReset = false`, `SessionProfitTargetUSD = 500`.
+Mặc định hiện tại: `EnableSessionProfitReset = true`, `SessionProfitTargetUSD = 500`.
 
 ### 12) RESET KHI LEVELS MATCH
 Reset EA khi **đủ đồng thời** 4 điều kiện sau:
@@ -208,7 +218,16 @@ Nếu thiếu một trong bốn (ví dụ mới có 4 bậc trên, hoặc P/L = 
 
 Khi đủ cả 4 điều kiện, EA thực hiện reset (đóng hết, base mới, daily/trading/ADX xử lý như các reset khác).
 
-Mặc định: `EnableResetWhenLevelsMatch = false`, `LevelMatchRequiredLevels = 5`, `LevelMatchSessionTargetUSD = 200`.
+Mặc định: `EnableResetWhenLevelsMatch = true`, `LevelMatchRequiredLevels = 3`, `LevelMatchSessionTargetUSD = 50`.
+
+### 13) RESTART DELAY (after RESET)
+- **RestartDelayMinutesAfterReset**: sau mỗi lần EA **RESET** (đóng hết lệnh/pending), EA sẽ **chờ X phút** rồi mới khởi động lại (đặt base mới + khởi tạo lưới). `0 = off`.
+
+**Lưu ý**:
+- Chỉ áp dụng cho các lần **RESET** (trailing lock / trailing SL hit / session reset / levels match…).
+- Khi đến thời điểm restart, EA vẫn phải thỏa các điều kiện đang bật như **Trading hours**, **ADX start filter**, **RSI start filter**; nếu chưa thỏa thì EA tiếp tục WAITING theo đúng điều kiện đó.
+
+Mặc định hiện tại: `RestartDelayMinutesAfterReset = 5`.
 
 ## Ví dụ cấu hình
 
