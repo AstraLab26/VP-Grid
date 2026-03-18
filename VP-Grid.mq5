@@ -28,8 +28,6 @@ enum ENUM_TRAILING_DROP_MODE { TRAILING_MODE_LOCK = 0,      // Lock: profit drop
 input group "=== 1. GRID ==="
 input double GridDistancePips = 1000.0;         // Grid distance (pips)
 input int MaxGridLevels = 100;                  // Max grid levels per side when not set below (default)
-input int MaxLevelsAboveBase = 0;              // Max levels above base (0 = use MaxGridLevels)
-input int MaxLevelsBelowBase = 0;               // Max levels below base (0 = use MaxGridLevels)
 
 //+------------------------------------------------------------------+
 //| 2. ORDERS                                                          |
@@ -45,7 +43,7 @@ input bool EnableAA = true;                     // AA: above base = virtual Buy 
 input double LotSizeAA = 0.01;                  // AA: Lot size level 1
 input ENUM_LOT_SCALE AALotScale = LOT_GEOMETRIC; // AA: Fixed / Geometric
 input double LotMultAA = 1.3;                   // AA: Lot multiplier for level 2+ (Geometric)
-input double MaxLotAA = 2.0;                    // AA: Max lot per order (0=no limit)
+input double MaxLotAA = 1.0;                    // AA: Max lot per order (0=no limit)
 input double TakeProfitPipsAA = 0.0;           // AA: Take profit (pips; 0=off)
 input bool EnableBalanceAAByBB = true;         // AA: Balance when (pool + loss) >= 20 USD; cooldown 300s. Prepare at 3 levels, execute at 5
 
@@ -54,7 +52,7 @@ input bool EnableBB = true;                     // BB: above base = virtual Buy;
 input double LotSizeBB = 0.01;                  // BB: Lot size level 1
 input ENUM_LOT_SCALE BBLotScale = LOT_GEOMETRIC; // BB: Fixed / Geometric
 input double LotMultBB = 1.3;                   // BB: Lot multiplier for level 2+ (Geometric)
-input double MaxLotBB = 2.0;                    // BB: Max lot per order (0=no limit)
+input double MaxLotBB = 1.0;                    // BB: Max lot per order (0=no limit)
 input double TakeProfitPipsBB = 1000.0;         // BB: Take profit (pips; 0=off)
 input bool EnableBalanceBB = true;              // BB: Balance when (pool + loss) >= 20 USD; cooldown 300s. Prepare at 3 levels, execute at 5
 
@@ -63,7 +61,7 @@ input bool EnableCC = true;                      // CC: above base = virtual Buy
 input double LotSizeCC = 0.01;                    // CC: Lot size level 1
 input ENUM_LOT_SCALE CCLotScale = LOT_FIXED;     // CC: Fixed / Geometric
 input double LotMultCC = 1.1;                    // CC: Lot multiplier for level 2+ (Geometric)
-input double MaxLotCC = 2.0;                     // CC: Max lot per order (0=no limit)
+input double MaxLotCC = 1.0;                     // CC: Max lot per order (0=no limit)
 input double TakeProfitPipsCC = 1000.0;          // CC: Take profit (pips; 0=off)
 input bool EnableBalanceCC = true;               // CC: Balance when (pool + loss) >= 20 USD; cooldown 300s. Prepare at 3 levels, execute at 5
 
@@ -131,9 +129,19 @@ input int TradingEndMinute = 0;                // End minute (server time)
 //+------------------------------------------------------------------+
 input group "=== 9. START FILTER (ADX) ==="
 input bool EnableADXStartFilter = false;       // Start EA (set base & place grid) only when ADX is below the threshold
-input ENUM_TIMEFRAMES ADXTimeframe = PERIOD_M15; // ADX timeframe
+input ENUM_TIMEFRAMES ADXTimeframe = PERIOD_M5; // ADX timeframe
 input int ADXPeriod = 14;                      // ADX period
-input double ADXStartThreshold = 25.0;         // Start when ADX < this value
+input double ADXStartThreshold = 20.0;         // Start when ADX < this value
+
+//+------------------------------------------------------------------+
+//| 9.1 START FILTER (RSI cross)                                      |
+//+------------------------------------------------------------------+
+input group "=== 9.1 START FILTER (RSI cross) ==="
+input bool EnableRSIStartFilter = false;       // Start EA (set base & place grid) only when RSI crosses up/down the thresholds
+input ENUM_TIMEFRAMES RSITimeframe = PERIOD_M15; // RSI timeframe
+input int RSIPeriod = 14;                      // RSI period
+input double RSIUpperCross = 70.0;             // Start when RSI crosses UP this level (e.g., 70)
+input double RSILowerCross = 30.0;             // Start when RSI crosses DOWN this level (e.g., 30)
 
 //+------------------------------------------------------------------+
 //| 10. RE-ARM DELAY (after TP)                                       |
@@ -148,16 +156,22 @@ input int RearmDelayMinutesDD = 10;            // DD: minutes to wait before re-
 //| 11. SESSION RESET (profit target)                                  |
 //+------------------------------------------------------------------+
 input group "=== 11. SESSION RESET (profit target) ==="
-input bool EnableSessionProfitReset = false;    // Reset EA when (session open + session closed) profit reaches the target; disabled during gongLaiMode
+input bool EnableSessionProfitReset = true;    // Reset EA when (session open + session closed) profit reaches the target; disabled during gongLaiMode
 input double SessionProfitTargetUSD = 500.0;    // Session target (USD)
 
 //+------------------------------------------------------------------+
 //| 12. RESET WHEN LEVELS MATCH (price above base)                     |
 //+------------------------------------------------------------------+
 input group "=== 12. RESET WHEN LEVELS MATCH ==="
-input bool EnableResetWhenLevelsMatch = false;  // Reset EA when all 4 conditions below are met
-input int LevelMatchRequiredLevels = 5;        // X: (1) max level above base = X, (2) max level below base = X (0 = any)
-input double LevelMatchSessionTargetUSD = 200.0; // (3) Session P/L (closed + open) >= this USD. (4) Trailing total profit mode not active
+input bool EnableResetWhenLevelsMatch = true;  // Reset EA when all 4 conditions below are met
+input int LevelMatchRequiredLevels = 3;        // X: (1) max level above base = X, (2) max level below base = X (0 = any)
+input double LevelMatchSessionTargetUSD = 50.0; // (3) Session P/L (closed + open) >= this USD. (4) Trailing total profit mode not active
+
+//+------------------------------------------------------------------+
+//| 13. RESTART DELAY (after RESET)                                   |
+//+------------------------------------------------------------------+
+input group "=== 13. RESTART DELAY (after RESET) ==="
+input int RestartDelayMinutesAfterReset = 5;   // After any EA RESET, wait X minutes before restarting (0=off)
 
 //--- Global variables
 CTrade trade;
@@ -166,8 +180,6 @@ int dgt;
 double basePrice;                               // Base price (base line)
 double gridLevels[];                            // Array of level prices (evenly spaced by GridDistancePips)
 double gridStep;                                // One grid step (price) = GridDistancePips, used for tolerance/snap
-int g_maxLevelsAbove = 100;                     // Effective max levels above base (set in InitializeGridLevels)
-int g_maxLevelsBelow = 100;                     // Effective max levels below base (set in InitializeGridLevels)
 // Pool = TP profit in current session minus lock (AA+BB+CC+DD). Used for balance AA/BB/CC only (DD is not balanced).
 double sessionClosedProfit = 0.0;               // Session: (TP profit - lock) in session. Reset on EA reset. Shared balance pool.
 double sessionLockedProfit = 0.0;               // Locked profit in current session. Reset on EA reset.
@@ -205,6 +217,10 @@ bool eaStoppedBySchedule = false;             // true = EA is stopped due to tra
 bool scheduleStopPending = false;             // true = end time passed while running; stop at next reset
 bool eaStoppedByAdx = false;                  // true = EA is waiting for ADX < threshold to start
 int adxHandle = INVALID_HANDLE;               // iADX handle (for start filter)
+bool eaStoppedByRsi = false;                  // true = EA is waiting for RSI cross to start
+int rsiHandle = INVALID_HANDLE;               // iRSI handle (for start filter)
+bool eaStoppedByRestartDelay = false;         // true = EA is waiting for restart delay after a RESET
+datetime restartDelayUntil = 0;               // when restart delay ends (server time)
 int MagicAA = 0;                              // AA orders magic (set in OnInit)
 int MagicBB = 0;                              // BB orders magic (MagicNumber+1)
 int MagicCC = 0;                              // CC orders magic (MagicNumber+2)
@@ -387,6 +403,51 @@ bool IsADXStartAllowed()
    return (adx < ADXStartThreshold);
 }
 
+bool GetRSIValues(double &rsiPrevClosed, double &rsiLastClosed)
+{
+   rsiPrevClosed = 0.0;
+   rsiLastClosed = 0.0;
+   if(!EnableRSIStartFilter)
+      return true;
+   if(rsiHandle == INVALID_HANDLE)
+      return false;
+   double buf[];
+   ArraySetAsSeries(buf, true);
+   // Use last two closed bars for stable cross detection: shift=2 -> previous closed, shift=1 -> last closed
+   if(CopyBuffer(rsiHandle, 0, 1, 2, buf) != 2)
+      return false;
+   // buf[0] = shift=1 (last closed), buf[1] = shift=2 (previous closed) because series=true
+   rsiLastClosed = buf[0];
+   rsiPrevClosed = buf[1];
+   return true;
+}
+
+bool IsRSIStartAllowed()
+{
+   if(!EnableRSIStartFilter)
+      return true;
+   double rsiPrev = 0.0, rsiLast = 0.0;
+   if(!GetRSIValues(rsiPrev, rsiLast))
+      return false; // no data -> do not start yet
+   // Cross up upper: prev < upper AND last >= upper
+   bool crossUp = (rsiPrev < RSIUpperCross && rsiLast >= RSIUpperCross);
+   // Cross down lower: prev > lower AND last <= lower
+   bool crossDown = (rsiPrev > RSILowerCross && rsiLast <= RSILowerCross);
+   return (crossUp || crossDown);
+}
+
+bool ScheduleRestartDelayAfterReset(const string reason)
+{
+   if(RestartDelayMinutesAfterReset <= 0)
+      return false;
+   restartDelayUntil = TimeCurrent() + (RestartDelayMinutesAfterReset * 60);
+   eaStoppedByRestartDelay = true;
+   Print(reason, ": restart delayed for ", RestartDelayMinutesAfterReset, " minutes.");
+   if(EnableResetNotification || EnableTelegram)
+      SendResetNotification(reason + ": waiting " + IntegerToString(RestartDelayMinutesAfterReset) + " min before restart");
+   return true;
+}
+
 void ResetDailyStopState()
 {
    dailyKey = DateKey(TimeCurrent());
@@ -431,6 +492,13 @@ void CheckDailyRolloverAndAutoRestart()
             if(EnableResetNotification || EnableTelegram)
                SendResetNotification("New day: waiting for ADX start condition");
             Print("New day: inside trading hours but ADX condition not met. EA will wait.");
+         }
+         else if(!IsRSIStartAllowed())
+         {
+            eaStoppedByRsi = true;
+            if(EnableResetNotification || EnableTelegram)
+               SendResetNotification("New day: waiting for RSI cross start condition");
+            Print("New day: inside trading hours but RSI cross condition not met. EA will wait.");
          }
          else
          {
@@ -503,6 +571,13 @@ void CheckTradingHoursAndAutoRestart()
             SendResetNotification("Trading hours started: waiting for ADX start condition");
          Print("Trading hours started but ADX condition not met. EA will wait.");
       }
+      else if(!IsRSIStartAllowed())
+      {
+         eaStoppedByRsi = true;
+         if(EnableResetNotification || EnableTelegram)
+            SendResetNotification("Trading hours started: waiting for RSI cross start condition");
+         Print("Trading hours started but RSI cross condition not met. EA will wait.");
+      }
       else
       {
          basePrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
@@ -520,6 +595,8 @@ void CheckADXStartAndAutoRestart()
 {
    if(!EnableADXStartFilter)
       return;
+   if(eaStoppedByRestartDelay)
+      return;
    if(!eaStoppedByAdx)
       return;
    if(eaStoppedByTarget)
@@ -529,6 +606,8 @@ void CheckADXStartAndAutoRestart()
    // ADX condition met -> start
    if(!IsADXStartAllowed())
       return;
+   if(EnableRSIStartFilter && !IsRSIStartAllowed())
+      return;
    eaStoppedByAdx = false;
    basePrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    InitializeGridLevels();
@@ -536,6 +615,76 @@ void CheckADXStartAndAutoRestart()
    if(EnableResetNotification || EnableTelegram)
       SendResetNotification("ADX start condition met: EA started");
    Print("ADX start condition met. Restart EA, new base = ", basePrice);
+}
+
+void CheckRSIStartAndAutoRestart()
+{
+   if(!EnableRSIStartFilter)
+      return;
+   if(eaStoppedByRestartDelay)
+      return;
+   if(!eaStoppedByRsi)
+      return;
+   if(eaStoppedByTarget)
+      return;
+   if(EnableTradingHours && !IsWithinTradingHours(TimeCurrent()))
+      return;
+   // RSI cross condition met -> start
+   if(!IsRSIStartAllowed())
+      return;
+   if(EnableADXStartFilter && !IsADXStartAllowed())
+      return;
+   eaStoppedByRsi = false;
+   basePrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   InitializeGridLevels();
+   ManageGridOrders();
+   if(EnableResetNotification || EnableTelegram)
+      SendResetNotification("RSI start condition met (cross): EA started");
+   Print("RSI start condition met (cross). Restart EA, new base = ", basePrice);
+}
+
+void CheckRestartDelayAndAutoRestart()
+{
+   if(!eaStoppedByRestartDelay)
+      return;
+   if(restartDelayUntil <= 0)
+   {
+      eaStoppedByRestartDelay = false;
+      return;
+   }
+   datetime now = TimeCurrent();
+   if(now < restartDelayUntil)
+      return;
+   // Delay time reached -> try to start (but still respect daily stop, trading hours, ADX, RSI)
+   eaStoppedByRestartDelay = false;
+   restartDelayUntil = 0;
+   if(eaStoppedByTarget)
+      return;
+   if(EnableTradingHours && !IsWithinTradingHours(now))
+   {
+      eaStoppedBySchedule = true;
+      return;
+   }
+   if(!IsADXStartAllowed())
+   {
+      eaStoppedByAdx = true;
+      if(EnableResetNotification || EnableTelegram)
+         SendResetNotification("Restart delay done: waiting for ADX start condition");
+      return;
+   }
+   if(!IsRSIStartAllowed())
+   {
+      eaStoppedByRsi = true;
+      if(EnableResetNotification || EnableTelegram)
+         SendResetNotification("Restart delay done: waiting for RSI cross start condition");
+      return;
+   }
+   basePrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   InitializeGridLevels();
+   ManageGridOrders();
+   if(EnableResetNotification || EnableTelegram)
+      SendResetNotification("Restart delay done: EA restarted");
+   Print("Restart delay done. Restart EA, new base = ", basePrice);
 }
 
 // Call this at RESET points to stop the EA if end time has passed (stop pending).
@@ -710,6 +859,9 @@ int OnInit()
    eaStoppedBySchedule = false;
    scheduleStopPending = false;
    eaStoppedByAdx = false;
+   eaStoppedByRsi = false;
+   eaStoppedByRestartDelay = false;
+   restartDelayUntil = 0;
 
    if(EnableADXStartFilter)
    {
@@ -717,6 +869,13 @@ int OnInit()
       adxHandle = iADX(_Symbol, ADXTimeframe, per);
       if(adxHandle == INVALID_HANDLE)
          Print("VP-Grid: failed to create ADX handle. err=", GetLastError());
+   }
+   if(EnableRSIStartFilter)
+   {
+      int per = MathMax(2, RSIPeriod);
+      rsiHandle = iRSI(_Symbol, RSITimeframe, per, PRICE_CLOSE);
+      if(rsiHandle == INVALID_HANDLE)
+         Print("VP-Grid: failed to create RSI handle. err=", GetLastError());
    }
    balanceGoc = (BaseCapitalUSD > 0) ? BaseCapitalUSD : AccountInfoDouble(ACCOUNT_BALANCE);
    attachBalance = AccountInfoDouble(ACCOUNT_BALANCE);   // Initial capital: balance when EA is first added (for panel only)
@@ -752,6 +911,14 @@ int OnInit()
       if(EnableResetNotification || EnableTelegram)
          SendResetNotification("ADX filter: waiting for ADX < threshold to start");
       Print("ADX filter: ADX condition not met at init. EA will wait.");
+      return(INIT_SUCCEEDED);
+   }
+   if(!IsRSIStartAllowed())
+   {
+      eaStoppedByRsi = true;
+      if(EnableResetNotification || EnableTelegram)
+         SendResetNotification("RSI filter: waiting for RSI cross to start");
+      Print("RSI filter: RSI cross condition not met at init. EA will wait.");
       return(INIT_SUCCEEDED);
    }
    InitializeGridLevels();
@@ -796,6 +963,11 @@ void OnDeinit(const int reason)
       IndicatorRelease(adxHandle);
       adxHandle = INVALID_HANDLE;
    }
+   if(rsiHandle != INVALID_HANDLE)
+   {
+      IndicatorRelease(rsiHandle);
+      rsiHandle = INVALID_HANDLE;
+   }
    if(EnableResetNotification || EnableTelegram)
    {
       UpdateSessionStatsForNotification();
@@ -811,8 +983,10 @@ void OnTick()
 {
    CheckDailyRolloverAndAutoRestart();
    CheckTradingHoursAndAutoRestart();
+   CheckRestartDelayAndAutoRestart();
    CheckADXStartAndAutoRestart();
-   if(eaStoppedByTarget || eaStoppedBySchedule || eaStoppedByAdx)
+   CheckRSIStartAndAutoRestart();
+   if(eaStoppedByTarget || eaStoppedBySchedule || eaStoppedByAdx || eaStoppedByRsi || eaStoppedByRestartDelay)
       return;
 
    ProcessVirtualPendingExecutions();   // Virtual pendings: trigger -> market before trailing/balance logic
@@ -899,6 +1073,8 @@ void OnTick()
                   lastSellTrailPrice = 0.0;
                   ClearBalanceSelection();
                   balancePrepareDirection = 0;
+                  if(ScheduleRestartDelayAfterReset("Trailing profit reset"))
+                     return;
                   if(!IsADXStartAllowed())
                   {
                      eaStoppedByAdx = true;
@@ -907,11 +1083,19 @@ void OnTick()
                         SendResetNotification("Reset done: waiting for ADX start condition");
                      return;
                   }
+                  if(!IsRSIStartAllowed())
+                  {
+                     eaStoppedByRsi = true;
+                     Print("Trailing profit reset: RSI cross condition not met. EA will wait to restart.");
+                     if(EnableResetNotification || EnableTelegram)
+                        SendResetNotification("Reset done: waiting for RSI cross start condition");
+                     return;
+                  }
                   basePrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
                   InitializeGridLevels();
                   Print("Trailing profit: lock (SL not placed, profit ", totalForTrailing, " USD <= drop ", dropLevel, "). Reset EA, new session.");
                   if(EnableResetNotification) { SendResetNotification("Trailing profit"); double b = AccountInfoDouble(ACCOUNT_BALANCE); sessionPeakBalance = b; sessionMinBalance = b; sessionMaxSingleLot = 0; sessionTotalLotAtMaxLot = 0; }
-                  if(!eaStoppedByTarget && !eaStoppedBySchedule && !eaStoppedByAdx)
+                  if(!eaStoppedByTarget && !eaStoppedBySchedule && !eaStoppedByAdx && !eaStoppedByRsi)
                      ManageGridOrders();
                   return;
                }
@@ -952,6 +1136,8 @@ void OnTick()
          ClearBalanceSelection();
          balancePrepareDirection = 0;
 
+         if(ScheduleRestartDelayAfterReset("Session target reset"))
+            return;
          if(!IsADXStartAllowed())
          {
             eaStoppedByAdx = true;
@@ -960,13 +1146,21 @@ void OnTick()
                SendResetNotification("Session target reached: waiting for ADX start condition");
             return;
          }
+         if(!IsRSIStartAllowed())
+         {
+            eaStoppedByRsi = true;
+            Print("Session target reset: RSI cross condition not met. EA will wait to restart.");
+            if(EnableResetNotification || EnableTelegram)
+               SendResetNotification("Session target reached: waiting for RSI cross start condition");
+            return;
+         }
 
          basePrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
          InitializeGridLevels();
          Print("Session profit target reached: ", DoubleToString(totalSession, 2), " >= ", DoubleToString(SessionProfitTargetUSD, 2), ". Reset EA, new base = ", basePrice);
          if(EnableResetNotification || EnableTelegram)
             SendResetNotification("Session profit target reached - reset");
-         if(!eaStoppedByTarget && !eaStoppedBySchedule && !eaStoppedByAdx)
+         if(!eaStoppedByTarget && !eaStoppedBySchedule && !eaStoppedByAdx && !eaStoppedByRsi)
             ManageGridOrders();
          return;
       }
@@ -1031,6 +1225,8 @@ void OnTick()
             ClearBalanceSelection();
             balancePrepareDirection = 0;
 
+            if(ScheduleRestartDelayAfterReset("Level match reset"))
+               return;
             if(!IsADXStartAllowed())
             {
                eaStoppedByAdx = true;
@@ -1039,13 +1235,21 @@ void OnTick()
                   SendResetNotification("Levels match + session target: waiting for ADX start condition");
                return;
             }
+            if(!IsRSIStartAllowed())
+            {
+               eaStoppedByRsi = true;
+               Print("Level match reset: RSI cross condition not met. EA will wait to restart.");
+               if(EnableResetNotification || EnableTelegram)
+                  SendResetNotification("Levels match + session target: waiting for RSI cross start condition");
+               return;
+            }
 
             basePrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
             InitializeGridLevels();
             Print("Level match reset: above=", countAbove, " (maxLv=", maxLevelAbove, ") below=", countBelow, " (maxLv=", maxLevelBelow, ") session P/L ", DoubleToString(totalSessionLM, 2), " >= ", DoubleToString(LevelMatchSessionTargetUSD, 2), ". New base = ", basePrice);
             if(EnableResetNotification || EnableTelegram)
                SendResetNotification("Levels match + session target reached - reset");
-            if(!eaStoppedByTarget && !eaStoppedBySchedule && !eaStoppedByAdx)
+            if(!eaStoppedByTarget && !eaStoppedBySchedule && !eaStoppedByAdx && !eaStoppedByRsi)
                ManageGridOrders();
             return;
          }
@@ -1089,6 +1293,8 @@ void OnTick()
          sessionPeakProfit = 0.0;
          ClearBalanceSelection();
          balancePrepareDirection = 0;
+         if(ScheduleRestartDelayAfterReset("Trailing SL reset"))
+            return;
          if(!IsADXStartAllowed())
          {
             eaStoppedByAdx = true;
@@ -1097,11 +1303,19 @@ void OnTick()
                SendResetNotification("Reset done: waiting for ADX start condition");
             return;
          }
+         if(!IsRSIStartAllowed())
+         {
+            eaStoppedByRsi = true;
+            Print("Trailing SL reset: RSI cross condition not met. EA will wait to restart.");
+            if(EnableResetNotification || EnableTelegram)
+               SendResetNotification("Reset done: waiting for RSI cross start condition");
+            return;
+         }
          basePrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
          InitializeGridLevels();
          Print("Trailing: SL hit, all positions closed. EA reset, new base = ", basePrice, ". Placing orders again.");
          if(EnableResetNotification) { SendResetNotification("Trailing profit (SL hit)"); double b = AccountInfoDouble(ACCOUNT_BALANCE); sessionPeakBalance = b; sessionMinBalance = b; sessionMaxSingleLot = 0; sessionTotalLotAtMaxLot = 0; }
-         if(!eaStoppedByTarget && !eaStoppedBySchedule && !eaStoppedByAdx)
+         if(!eaStoppedByTarget && !eaStoppedBySchedule && !eaStoppedByAdx && !eaStoppedByRsi)
             ManageGridOrders();
          else
             return;  // stopped (daily/schedule/adx) -> wait
@@ -1288,6 +1502,26 @@ void SendResetNotification(const string reason)
       msg += ")\n";
       if(eaStoppedByAdx)
          msg += "ADX filter: EA is WAITING for ADX condition\n";
+   }
+   if(EnableRSIStartFilter)
+   {
+      double rsiPrev = 0.0, rsiLast = 0.0;
+      bool ok = GetRSIValues(rsiPrev, rsiLast);
+      msg += "RSI start filter: cross up " + DoubleToString(RSIUpperCross, 1) + " or cross down " + DoubleToString(RSILowerCross, 1) + " (";
+      if(ok)
+         msg += "prev=" + DoubleToString(rsiPrev, 2) + ", last=" + DoubleToString(rsiLast, 2);
+      else
+         msg += "n/a";
+      msg += ")\n";
+      if(eaStoppedByRsi)
+         msg += "RSI filter: EA is WAITING for RSI cross\n";
+   }
+   if(eaStoppedByRestartDelay && restartDelayUntil > 0)
+   {
+      int secLeft = (int)MathMax(0, (int)(restartDelayUntil - TimeCurrent()));
+      int minLeft = secLeft / 60;
+      int remSec = secLeft % 60;
+      msg += "Restart delay: EA is WAITING " + IntegerToString(minLeft) + "m " + IntegerToString(remSec) + "s before restart\n";
    }
    msg += "Locked profit (saved, cumulative): " + DoubleToString(lockedProfitReserve, 2) + " USD\n\n";
    msg += "--- FREE EA ---\n";
@@ -1564,7 +1798,7 @@ void DoGongLaiTrailing()
       if(trailingGocBuy <= 0.0)
       {
          int nLevels = ArraySize(gridLevels);
-         for(int i = 0; i < g_maxLevelsAbove && i < nLevels; i++)
+         for(int i = 0; i < MaxGridLevels && i < nLevels; i++)
          {
             double L = gridLevels[i];
             if(L < bid && L > trailingGocBuy)
@@ -1608,7 +1842,7 @@ void DoGongLaiTrailing()
       if(trailingGocSell <= 0.0)
       {
          int nLevels = ArraySize(gridLevels);
-         for(int i = g_maxLevelsAbove; i < nLevels; i++)
+         for(int i = MaxGridLevels; i < nLevels; i++)
          {
             double L = gridLevels[i];
             if(L > ask && (trailingGocSell <= 0.0 || L < trailingGocSell))
@@ -1734,10 +1968,10 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
 //+------------------------------------------------------------------+
 double GetGridLevelPrice(int levelIndex)
 {
-   if(levelIndex < g_maxLevelsAbove)
-      return NormalizeDouble(basePrice + (levelIndex + 1) * gridStep, dgt);   // Above: 1, 2, ... g_maxLevelsAbove steps from base
+   if(levelIndex < MaxGridLevels)
+      return NormalizeDouble(basePrice + (levelIndex + 1) * gridStep, dgt);   // Above: 1, 2, ... MaxGridLevels steps from base
    else
-      return NormalizeDouble(basePrice - (levelIndex - g_maxLevelsAbove + 1) * gridStep, dgt);   // Below: 1, 2, ... g_maxLevelsBelow steps from base
+      return NormalizeDouble(basePrice - (levelIndex - MaxGridLevels + 1) * gridStep, dgt);   // Below: 1, 2, ... MaxGridLevels steps from base
 }
 
 //+------------------------------------------------------------------+
@@ -1925,15 +2159,13 @@ void InitializeGridLevels()
    sessionStartBalance = bal;
    // attachBalance NOT updated here - set once in OnInit (capital when EA first attached)
    gridStep = GridDistancePips * pnt * 10.0;   // One grid step = GridDistancePips pips (even spacing)
-   g_maxLevelsAbove = (MaxLevelsAboveBase > 0) ? MathMax(1, MaxLevelsAboveBase) : MaxGridLevels;
-   g_maxLevelsBelow = (MaxLevelsBelowBase > 0) ? MathMax(1, MaxLevelsBelowBase) : MaxGridLevels;
-   int totalLevels = g_maxLevelsAbove + g_maxLevelsBelow;
+   int totalLevels = MaxGridLevels * 2;
 
    ArrayResize(gridLevels, totalLevels);
 
    for(int i = 0; i < totalLevels; i++)
       gridLevels[i] = GetGridLevelPrice(i);
-   Print("Initialized ", totalLevels, " grid levels (", g_maxLevelsAbove, " above + ", g_maxLevelsBelow, " below base), spacing ", GridDistancePips, " pips");
+   Print("Initialized ", totalLevels, " grid levels (", MaxGridLevels, " above + ", MaxGridLevels, " below base), spacing ", GridDistancePips, " pips");
 }
 
 //+------------------------------------------------------------------+
@@ -2019,7 +2251,7 @@ void RemoveDuplicateOrdersAtLevel()
       for(int L = 0; L < nLevels; L++)
       {
          double priceLevel = gridLevels[L];
-         bool isSellLevel = (L < g_maxLevelsAbove);
+         bool isSellLevel = (L < MaxGridLevels);
          bool isBuy = !isSellLevel;
          int positionCount = 0;
          for(int i = 0; i < PositionsTotal(); i++)
@@ -2089,8 +2321,8 @@ void DoBalanceAll()
    bool priceAboveBase = (bid > basePrice);
    bool priceBelowBase = (bid < basePrice);
    int nLevels = ArraySize(gridLevels);
-   int prepLevels = MathMax(1, MathMin(g_maxLevelsAbove, BALANCE_PREPARE_LEVELS));
-   int execLevels = MathMax(prepLevels, MathMin(g_maxLevelsAbove, BALANCE_EXECUTE_LEVELS));
+   int prepLevels = MathMax(1, MathMin(MaxGridLevels, BALANCE_PREPARE_LEVELS));
+   int execLevels = MathMax(prepLevels, MathMin(MaxGridLevels, BALANCE_EXECUTE_LEVELS));
    int idxPrep = prepLevels - 1;   // e.g. 3 levels -> index 2 above base
    int idxExec = execLevels - 1;   // e.g. 5 levels -> index 4 above base
 
@@ -2118,10 +2350,10 @@ void DoBalanceAll()
    }
    else if(priceBelowBase)
    {
-      int idxPrepBelow = g_maxLevelsAbove + idxPrep;
+      int idxPrepBelow = MaxGridLevels + idxPrep;
       if(nLevels <= idxPrepBelow || bid > gridLevels[idxPrepBelow])
          return;   // not deep enough below base to refresh; keep prepare until cross base
-      int idxExecBelow = g_maxLevelsAbove + idxExec;
+      int idxExecBelow = MaxGridLevels + idxExec;
       if(nLevels <= idxExecBelow || bid > gridLevels[idxExecBelow])
          balancePrepareDirection = -1;
    }
@@ -2131,7 +2363,7 @@ void DoBalanceAll()
       executeZone = true;
    else if(priceBelowBase)
    {
-      int idxExecBelow = g_maxLevelsAbove + idxExec;
+      int idxExecBelow = MaxGridLevels + idxExec;
       if(nLevels > idxExecBelow && bid <= gridLevels[idxExecBelow])
          executeZone = true;
    }
@@ -2273,7 +2505,7 @@ void ManageGridOrders()
    RemoveDuplicateOrdersAtLevel();
    double currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    // --- ABOVE base: AA/BB/CC = virtual Buy | DD = virtual Sell ---
-   for(int levelNum = 1; levelNum <= g_maxLevelsAbove; levelNum++)
+   for(int levelNum = 1; levelNum <= MaxGridLevels; levelNum++)
    {
       int idxAbove = levelNum - 1;
       double levelAbove = gridLevels[idxAbove];
@@ -2286,9 +2518,9 @@ void ManageGridOrders()
       }
    }
    // --- BELOW base: AA/BB/CC = virtual Sell | DD = virtual Buy ---
-   for(int levelNum = 1; levelNum <= g_maxLevelsBelow; levelNum++)
+   for(int levelNum = 1; levelNum <= MaxGridLevels; levelNum++)
    {
-      int idxBelow = g_maxLevelsAbove + levelNum - 1;
+      int idxBelow = MaxGridLevels + levelNum - 1;
       double levelBelow = gridLevels[idxBelow];
       if(levelBelow <= basePrice && levelBelow < currentPrice)
       {
