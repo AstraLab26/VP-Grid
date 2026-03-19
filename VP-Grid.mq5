@@ -724,6 +724,7 @@ bool BalanceOpenAcrossBaseNoTP(double xUSD)
    double balanceFloor = sessionStartBalance + lockedProfitReserve;
    double balanceNow = AccountInfoDouble(ACCOUNT_BALANCE);
    bool anyClosed = false;
+   bool posClosed = false;
 
    // Close profitable first (this helps margin/floor)
    if(PositionCloseWithComment(posTicket, "Balance open (no TP) profit order"))
@@ -731,6 +732,7 @@ bool BalanceOpenAcrossBaseNoTP(double xUSD)
       sessionClosedProfitRemaining += posPr;
       balanceNow += posPr;
       anyClosed = true;
+      posClosed = true;
       // cooldown timestamp for this type
       if(posType == 0) lastBalanceAAByBBCloseTime = TimeCurrent();
       else if(posType == 1) lastBalanceBBCloseTime = TimeCurrent();
@@ -738,27 +740,43 @@ bool BalanceOpenAcrossBaseNoTP(double xUSD)
    }
 
    // Close losing opposite-side (ensure we don't drop below floor)
-   if(negPr < 0.0)
+   if(negPr < 0.0 && posClosed)
    {
       double absLoss = -negPr;
-      double volClose = negVol;
+      if(absLoss <= 0.0) return anyClosed;
+
+      // New behavior: if the profitable position's amount is not enough to cover the whole losing position,
+      // allow closing only a fraction of the losing position.
+      // We estimate fraction by: posPr / absLoss (posPr > 0).
+      double desiredPortion = posPr / absLoss;   // 0..1 (if <1, partial close)
+      if(desiredPortion > 1.0) desiredPortion = 1.0;
+      if(desiredPortion < 0.0) desiredPortion = 0.0;
+
       double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
       double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
-      // If closing full would push balance below floor, close partial proportionally
-      double realizedPnLfull = negPr; // full volume
-      double balanceAfterFull = balanceNow + realizedPnLfull;
-      if(balanceAfterFull < balanceFloor)
+
+      // Additionally ensure we don't drop below floor after closing.
+      // balanceAfterClose = balanceNow + (portion * negPr)
+      double ratioAllowedByFloor = 1.0;
+      double balanceAfterFullLoss = balanceNow + negPr; // negPr < 0
+      if(balanceAfterFullLoss < balanceFloor)
       {
-         // volClose/negVol = (balanceFloor - balanceNow) / negPr
-         double ratio = 0.0;
-         if(negPr != 0.0)
-            ratio = (balanceFloor - balanceNow) / negPr; // negPr <0, (floor-balanceNow) <=0 typically -> ratio >=0
-         if(ratio < 0.0) ratio = 0.0;
-         if(ratio > 1.0) ratio = 1.0;
-         volClose = negVol * ratio;
-         volClose = MathFloor(volClose / lotStep) * lotStep;
+         // portionAllowed * negPr = balanceFloor - balanceNow
+         // portionAllowed = (balanceFloor - balanceNow) / negPr
+         ratioAllowedByFloor = (balanceFloor - balanceNow) / negPr; // negPr <0 -> ratio becomes positive
+         if(ratioAllowedByFloor < 0.0) ratioAllowedByFloor = 0.0;
+         if(ratioAllowedByFloor > 1.0) ratioAllowedByFloor = 1.0;
       }
-      if(volClose >= (negVol - lotStep * 0.5))
+      desiredPortion = MathMin(desiredPortion, ratioAllowedByFloor);
+
+      double volClose = negVol * desiredPortion;
+      volClose = MathFloor(volClose / lotStep) * lotStep;
+
+      if(volClose < minLot)
+         return anyClosed;
+
+      // If very close to full volume -> close full
+      if(desiredPortion >= 0.999 || volClose >= (negVol - lotStep * 0.5))
       {
          if(PositionCloseWithComment(negTicket, "Balance open (no TP) loss order"))
          {
@@ -771,7 +789,7 @@ bool BalanceOpenAcrossBaseNoTP(double xUSD)
       }
       else
       {
-         if(volClose >= minLot && PositionClosePartialWithComment(negTicket, volClose, "Balance open (no TP) loss order"))
+         if(PositionClosePartialWithComment(negTicket, volClose, "Balance open (no TP) loss order"))
          {
             double realizedPnL = (volClose / negVol) * negPr; // negative
             sessionClosedProfitRemaining += realizedPnL;
