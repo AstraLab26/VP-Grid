@@ -26,7 +26,7 @@ enum ENUM_TRAILING_DROP_MODE { TRAILING_MODE_LOCK = 0,      // Lock: profit drop
 //| 1. GRID                                                           |
 //+------------------------------------------------------------------+
 input group "=== 1. GRID ==="
-input double GridDistancePips = 1000.0;         // Grid distance (pips)
+input double GridDistancePips = 1500.0;         // Grid distance (pips)
 input int MaxGridLevels = 100;                  // Max grid levels per side when not set below (default)
 
 //+------------------------------------------------------------------+
@@ -43,7 +43,7 @@ input bool EnableAA = true;                     // AA: above base = virtual Buy 
 input double LotSizeAA = 0.01;                  // AA: Lot size level 1
 input ENUM_LOT_SCALE AALotScale = LOT_GEOMETRIC; // AA: Fixed / Geometric
 input double LotMultAA = 1.3;                   // AA: Lot multiplier for level 2+ (Geometric)
-input double MaxLotAA = 1.0;                    // AA: Max lot per order (0=no limit)
+input double MaxLotAA = 2.0;                    // AA: Max lot per order (0=no limit)
 input double TakeProfitPipsAA = 0.0;           // AA: Take profit (pips; 0=off)
 input bool EnableBalanceAAByBB = true;         // AA: Balance when (pool + loss) >= 20 USD; cooldown 300s. Prepare at 3 levels, execute at 5
 
@@ -52,17 +52,17 @@ input bool EnableBB = true;                     // BB: above base = virtual Buy;
 input double LotSizeBB = 0.01;                  // BB: Lot size level 1
 input ENUM_LOT_SCALE BBLotScale = LOT_GEOMETRIC; // BB: Fixed / Geometric
 input double LotMultBB = 1.3;                   // BB: Lot multiplier for level 2+ (Geometric)
-input double MaxLotBB = 1.0;                    // BB: Max lot per order (0=no limit)
-input double TakeProfitPipsBB = 1000.0;         // BB: Take profit (pips; 0=off)
+input double MaxLotBB = 2.0;                    // BB: Max lot per order (0=no limit)
+input double TakeProfitPipsBB = 1500.0;         // BB: Take profit (pips; 0=off)
 input bool EnableBalanceBB = true;              // BB: Balance when (pool + loss) >= 20 USD; cooldown 300s. Prepare at 3 levels, execute at 5
 
 input group "--- 2.4 CC (virtual): BUY above base + SELL below base ---"
-input bool EnableCC = true;                      // CC: above base = virtual Buy; below base = virtual Sell
+input bool EnableCC = false;                      // CC: above base = virtual Buy; below base = virtual Sell
 input double LotSizeCC = 0.01;                    // CC: Lot size level 1
 input ENUM_LOT_SCALE CCLotScale = LOT_FIXED;     // CC: Fixed / Geometric
 input double LotMultCC = 1.1;                    // CC: Lot multiplier for level 2+ (Geometric)
-input double MaxLotCC = 1.0;                     // CC: Max lot per order (0=no limit)
-input double TakeProfitPipsCC = 1000.0;          // CC: Take profit (pips; 0=off)
+input double MaxLotCC = 2.0;                     // CC: Max lot per order (0=no limit)
+input double TakeProfitPipsCC = 1500.0;          // CC: Take profit (pips; 0=off)
 input bool EnableBalanceCC = true;               // CC: Balance when (pool + loss) >= 20 USD; cooldown 300s. Prepare at 3 levels, execute at 5
 
 input group "--- 2.5 DD (virtual): SELL above base + BUY below base ---"
@@ -125,11 +125,24 @@ input int TradingEndHour = 16;                 // End hour (server time)
 input int TradingEndMinute = 0;                // End minute (server time)
 
 //+------------------------------------------------------------------+
+//| 8.1 WEEKDAYS SCHEDULE                                              |
+//+------------------------------------------------------------------+
+input group "=== 8.1 WEEKDAYS (run days) ==="
+input bool EnableWeekdaySchedule = false;      // Run EA only on selected weekdays; if a non-run day starts while running, EA stops on next RESET
+input bool RunMonday = true;
+input bool RunTuesday = true;
+input bool RunWednesday = true;
+input bool RunThursday = true;
+input bool RunFriday = true;
+input bool RunSaturday = false;
+input bool RunSunday = false;
+
+//+------------------------------------------------------------------+
 //| 9. START FILTER (ADX)                                              |
 //+------------------------------------------------------------------+
 input group "=== 9. START FILTER (ADX) ==="
 input bool EnableADXStartFilter = false;       // Start EA (set base & place grid) only when ADX is below the threshold
-input ENUM_TIMEFRAMES ADXTimeframe = PERIOD_M5; // ADX timeframe
+input ENUM_TIMEFRAMES ADXTimeframe = PERIOD_M15; // ADX timeframe
 input int ADXPeriod = 14;                      // ADX period
 input double ADXStartThreshold = 20.0;         // Start when ADX < this value
 
@@ -144,13 +157,31 @@ input double RSIUpperCross = 70.0;             // Start when RSI crosses UP this
 input double RSILowerCross = 30.0;             // Start when RSI crosses DOWN this level (e.g., 30)
 
 //+------------------------------------------------------------------+
+//| 9.2 BALANCE FILTER (RSI)                                          |
+//+------------------------------------------------------------------+
+input group "=== 9.2 BALANCE FILTER (RSI) ==="
+input bool EnableRSIBalanceFilter = true;     // Allow balance closes only when RSI condition is met
+input ENUM_TIMEFRAMES RSIBalanceTimeframe = PERIOD_M5; // RSI timeframe for balance filter
+input int RSIBalanceLookbackBars = 10;         // Lookback bars for RSI extreme check (closed bars)
+input double RSIBalanceUpper = 70.0;           // Price above base: require RSI > this level
+input double RSIBalanceLower = 30.0;           // Price below base: require RSI < this level
+
+//+------------------------------------------------------------------+
+//| 9.3 BALANCE ACROSS BASE (open, no TP)                           |
+//+------------------------------------------------------------------+
+input group "=== 9.3 BALANCE ACROSS BASE (open, no TP) ==="
+input bool EnableBalanceOpenAcrossBaseNoTP = true; // Close opposite-side losing positions only when same-side TPless profit >= X
+input double BalanceOpenAcrossBaseNoTP_XUSD = 20.0;  // X USD
+input int BalanceOpenAcrossBaseNoTP_MinDistanceLevels = 3; // Current price must be at least this many grid steps away from base
+
+//+------------------------------------------------------------------+
 //| 10. RE-ARM DELAY (after TP)                                       |
 //+------------------------------------------------------------------+
 input group "=== 10. RE-ARM DELAY (after TP) ==="
-input int RearmDelayMinutesAA = 10;            // AA: minutes to wait before re-placing the same level after a TP close (0=off)
-input int RearmDelayMinutesBB = 10;            // BB: minutes to wait before re-placing the same level after a TP close (0=off)
-input int RearmDelayMinutesCC = 10;            // CC: minutes to wait before re-placing the same level after a TP close (0=off)
-input int RearmDelayMinutesDD = 10;            // DD: minutes to wait before re-placing the same level after a TP close (0=off)
+input int RearmDelayMinutesAA = 20;            // AA: minutes to wait before re-placing the same level after a TP close (0=off)
+input int RearmDelayMinutesBB = 20;            // BB: minutes to wait before re-placing the same level after a TP close (0=off)
+input int RearmDelayMinutesCC = 20;            // CC: minutes to wait before re-placing the same level after a TP close (0=off)
+input int RearmDelayMinutesDD = 20;            // DD: minutes to wait before re-placing the same level after a TP close (0=off)
 
 //+------------------------------------------------------------------+
 //| 11. SESSION RESET (profit target)                                  |
@@ -163,15 +194,15 @@ input double SessionProfitTargetUSD = 500.0;    // Session target (USD)
 //| 12. RESET WHEN LEVELS MATCH (price above base)                     |
 //+------------------------------------------------------------------+
 input group "=== 12. RESET WHEN LEVELS MATCH ==="
-input bool EnableResetWhenLevelsMatch = true;  // Reset EA when all 4 conditions below are met
-input int LevelMatchRequiredLevels = 3;        // X: (1) max level above base = X, (2) max level below base = X (0 = any)
+input bool EnableResetWhenLevelsMatch = false;  // Reset EA when all 4 conditions below are met
+input int LevelMatchRequiredLevels = 4;        // X: (1) max level above base = X, (2) max level below base = X (0 = any)
 input double LevelMatchSessionTargetUSD = 50.0; // (3) Session P/L (closed + open) >= this USD. (4) Trailing total profit mode not active
 
 //+------------------------------------------------------------------+
 //| 13. RESTART DELAY (after RESET)                                   |
 //+------------------------------------------------------------------+
 input group "=== 13. RESTART DELAY (after RESET) ==="
-input int RestartDelayMinutesAfterReset = 5;   // After any EA RESET, wait X minutes before restarting (0=off)
+input int RestartDelayMinutesAfterReset = 0;   // After any EA RESET, wait X minutes before restarting (0=off)
 
 //--- Global variables
 CTrade trade;
@@ -215,10 +246,13 @@ int dailyStopDayKey = 0;                      // yyyymmdd when daily target was 
 double dailyResetProfit = 0.0;                // Cumulative sum of (balanceNow - sessionStartBalance) per RESET across days, until target is reached
 bool eaStoppedBySchedule = false;             // true = EA is stopped due to trading hours (wait until next start)
 bool scheduleStopPending = false;             // true = end time passed while running; stop at next reset
+bool eaStoppedByWeekday = false;              // true = EA is stopped due to weekday schedule (wait until next allowed day)
+bool weekdayStopPending = false;              // true = a non-run day started while running; stop at next reset
 bool eaStoppedByAdx = false;                  // true = EA is waiting for ADX < threshold to start
 int adxHandle = INVALID_HANDLE;               // iADX handle (for start filter)
 bool eaStoppedByRsi = false;                  // true = EA is waiting for RSI cross to start
 int rsiHandle = INVALID_HANDLE;               // iRSI handle (for start filter)
+int rsiBalanceHandle = INVALID_HANDLE;        // iRSI handle (for balance filter)
 bool eaStoppedByRestartDelay = false;         // true = EA is waiting for restart delay after a RESET
 datetime restartDelayUntil = 0;               // when restart delay ends (server time)
 int MagicAA = 0;                              // AA orders magic (set in OnInit)
@@ -324,11 +358,38 @@ void SetRearmBlock(long magic, int levelNum, datetime until)
    g_rearmBlocks[n].until = until;
 }
 
+void RemoveRearmBlock(long magic, int levelNum)
+{
+   int idx = FindRearmBlockIndex(magic, levelNum);
+   if(idx < 0) return;
+   int n = ArraySize(g_rearmBlocks);
+   if(n <= 1)
+   {
+      ArrayResize(g_rearmBlocks, 0);
+      return;
+   }
+   for(int i = idx; i < n - 1; i++)
+      g_rearmBlocks[i] = g_rearmBlocks[i + 1];
+   ArrayResize(g_rearmBlocks, n - 1);
+}
+
 bool IsRearmBlocked(long magic, int levelNum)
 {
    int idx = FindRearmBlockIndex(magic, levelNum);
    if(idx < 0) return false;
    return (g_rearmBlocks[idx].until > TimeCurrent());
+}
+
+bool IsRearmDistanceBlocked(long magic, int levelNum, double priceLevel)
+{
+   int idx = FindRearmBlockIndex(magic, levelNum);
+   if(idx < 0) return false;                 // no TP record -> do not block by distance
+   if(g_rearmBlocks[idx].until > TimeCurrent())
+      return false;                          // still time-blocked (handled separately)
+   if(gridStep <= 0)
+      return false;
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   return (MathAbs(bid - priceLevel) < gridStep); // require current price to be at least 1 grid step away
 }
 
 bool TryParseLevelFromComment(const string cmt, int &levelNum)
@@ -375,6 +436,22 @@ bool IsWithinTradingHours(datetime t)
       return (nowMin >= startMin && nowMin < endMin);
    // If user sets a cross-midnight window, treat it as "run outside the gap"
    return (nowMin >= startMin || nowMin < endMin);
+}
+
+bool IsAllowedWeekday(datetime t)
+{
+   if(!EnableWeekdaySchedule)
+      return true;
+   MqlDateTime s;
+   TimeToStruct(t, s);
+   int dow = s.day_of_week; // 0=Sunday ... 6=Saturday
+   if(dow == 1) return RunMonday;
+   if(dow == 2) return RunTuesday;
+   if(dow == 3) return RunWednesday;
+   if(dow == 4) return RunThursday;
+   if(dow == 5) return RunFriday;
+   if(dow == 6) return RunSaturday;
+   return RunSunday; // 0
 }
 
 bool GetADXValue(double &adxValue)
@@ -434,6 +511,279 @@ bool IsRSIStartAllowed()
    // Cross down lower: prev > lower AND last <= lower
    bool crossDown = (rsiPrev > RSILowerCross && rsiLast <= RSILowerCross);
    return (crossUp || crossDown);
+}
+
+bool IsRSIBalanceAllowed(bool priceAboveBase)
+{
+   if(!EnableRSIBalanceFilter)
+      return true;
+   if(rsiBalanceHandle == INVALID_HANDLE)
+      return false;
+   int lookback = MathMax(1, RSIBalanceLookbackBars);
+   double buf[];
+   ArraySetAsSeries(buf, true);
+   // closed bars: shift 1..lookback
+   if(CopyBuffer(rsiBalanceHandle, 0, 1, lookback, buf) != lookback)
+      return false;
+   double rsiNow = buf[0]; // last closed bar
+   if(priceAboveBase)
+   {
+      if(rsiNow <= RSIBalanceUpper)
+         return false;
+      for(int i = 0; i < lookback; i++)
+         if(buf[i] > RSIBalanceUpper)
+            return true;
+      return false;
+   }
+   else
+   {
+      if(rsiNow >= RSIBalanceLower)
+         return false;
+      for(int i = 0; i < lookback; i++)
+         if(buf[i] < RSIBalanceLower)
+            return true;
+      return false;
+   }
+}
+
+// Balance: close opposite-side losing positions (no TP) only when same-side TPless profit >= X.
+// Condition (as per request):
+// - Same-side (relative to current price vs base): positions with TP not set (TP<=0) must have total profit >= X.
+// - Opposite-side: positions with TP not set must have total loss (abs) >= X.
+// Action:
+// - Close opposite-side no-TP losing positions partially/fully until their total loss reaches about X.
+bool BalanceOpenAcrossBaseNoTP(double xUSD)
+{
+   if(!EnableBalanceOpenAcrossBaseNoTP)
+      return false;
+   if(xUSD <= 0.0)
+      return false;
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   bool priceAboveBase = (bid > basePrice);
+   bool priceBelowBase = (bid < basePrice);
+   if(!priceAboveBase && !priceBelowBase)
+      return false;
+
+   // Distance condition: current price must be at least N grid steps away from base.
+   if(gridStep <= 0)
+      return false;
+   double minDistPrice = gridStep * (double)MathMax(1, BalanceOpenAcrossBaseNoTP_MinDistanceLevels);
+   if(MathAbs(bid - basePrice) < minDistPrice)
+      return false;
+
+   // Balance open positions (no TP) across base:
+   // If sumPos (profit on same side, no-TP) + sumNegAbs (abs(loss) on opposite side, no-TP) >= X,
+   // then close 2 orders: one profitable (positive) on the same side and one losing (negative) on the opposite side.
+   //
+   // Only for our balanced magics (AA/BB/CC). DD is not included.
+   double sumPos = 0.0;
+   double sumNegAbs = 0.0;
+
+   // Candidate arrays
+   ulong posTickets[];
+   double posPls[];
+   double posVols[];
+   double posOpenPrices[];
+   int posTypes[]; // 0=AA,1=BB,2=CC
+   ArrayResize(posTickets, 0);
+   ArrayResize(posPls, 0);
+   ArrayResize(posVols, 0);
+   ArrayResize(posOpenPrices, 0);
+   ArrayResize(posTypes, 0);
+
+   ulong negTickets[];
+   double negPls[];       // negative
+   double negVols[];
+   double negOpenPrices[];
+   int negTypes[];        // 0=AA,1=BB,2=CC
+   ArrayResize(negTickets, 0);
+   ArrayResize(negPls, 0);
+   ArrayResize(negVols, 0);
+   ArrayResize(negOpenPrices, 0);
+   ArrayResize(negTypes, 0);
+
+   for(int i = 0; i < PositionsTotal(); i++)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket <= 0) continue;
+      if(!IsOurMagic(PositionGetInteger(POSITION_MAGIC)) || PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+      long magic = PositionGetInteger(POSITION_MAGIC);
+      int typ = -1;
+      if(magic == MagicAA) typ = 0;
+      else if(magic == MagicBB) typ = 1;
+      else if(magic == MagicCC) typ = 2;
+      else
+         continue; // ignore DD in this feature
+
+      if(sessionStartTime > 0 && (datetime)PositionGetInteger(POSITION_TIME) < sessionStartTime)
+         continue;
+
+      double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+      // Only consider positions across base: "same side" and "opposite side" relative to current price
+      bool isSameSide = (priceAboveBase) ? (openPrice > basePrice) : (openPrice < basePrice);
+      bool isOppSide  = (priceAboveBase) ? (openPrice < basePrice) : (openPrice > basePrice);
+      if(!isSameSide && !isOppSide)
+         continue;
+
+      double tp = PositionGetDouble(POSITION_TP);
+      if(tp > 0.0)
+         continue; // must have no TP configured
+
+      double pr = GetPositionPnL(ticket); // profit+swap+commission
+      if(isSameSide && pr > 0.0)
+      {
+         sumPos += pr;
+         int n = ArraySize(posTickets);
+         ArrayResize(posTickets, n + 1);
+         ArrayResize(posPls, n + 1);
+         ArrayResize(posVols, n + 1);
+         ArrayResize(posOpenPrices, n + 1);
+         ArrayResize(posTypes, n + 1);
+         posTickets[n] = ticket;
+         posPls[n] = pr;
+         posVols[n] = PositionGetDouble(POSITION_VOLUME);
+         posOpenPrices[n] = openPrice;
+         posTypes[n] = typ;
+      }
+      else if(isOppSide && pr < 0.0)
+      {
+         double absLoss = -pr;
+         sumNegAbs += absLoss;
+         int n = ArraySize(negTickets);
+         ArrayResize(negTickets, n + 1);
+         ArrayResize(negPls, n + 1);
+         ArrayResize(negVols, n + 1);
+         ArrayResize(negOpenPrices, n + 1);
+         ArrayResize(negTypes, n + 1);
+         negTickets[n] = ticket;
+         negPls[n] = pr; // negative
+         negVols[n] = PositionGetDouble(POSITION_VOLUME);
+         negOpenPrices[n] = openPrice;
+         negTypes[n] = typ;
+      }
+   }
+
+   // Condition from request:
+   // (sumPos + sumNegAbs) >= X USD
+   if((sumPos + sumNegAbs) < xUSD)
+      return false;
+
+   if(ArraySize(posTickets) <= 0 || ArraySize(negTickets) <= 0)
+      return false;
+
+   // Sort positive candidates: farthest from base first; then AA->BB->CC
+   int pcnt = ArraySize(posTickets);
+   for(int i = 0; i < pcnt - 1; i++)
+      for(int j = i + 1; j < pcnt; j++)
+      {
+         double di = MathAbs(posOpenPrices[i] - basePrice);
+         double dj = MathAbs(posOpenPrices[j] - basePrice);
+         bool swap = (dj > di);
+         if(!swap && MathAbs(dj - di) < gridStep * 0.5 && posTypes[j] < posTypes[i])
+            swap = true;
+         if(swap)
+         {
+            ulong t = posTickets[i]; posTickets[i] = posTickets[j]; posTickets[j] = t;
+            double p = posPls[i]; posPls[i] = posPls[j]; posPls[j] = p;
+            double v = posVols[i]; posVols[i] = posVols[j]; posVols[j] = v;
+            double op = posOpenPrices[i]; posOpenPrices[i] = posOpenPrices[j]; posOpenPrices[j] = op;
+            int tt = posTypes[i]; posTypes[i] = posTypes[j]; posTypes[j] = tt;
+         }
+      }
+
+   // Sort negative candidates: farthest from base first; then AA->BB->CC
+   int ncnt = ArraySize(negTickets);
+   for(int i = 0; i < ncnt - 1; i++)
+      for(int j = i + 1; j < ncnt; j++)
+      {
+         double di = MathAbs(negOpenPrices[i] - basePrice);
+         double dj = MathAbs(negOpenPrices[j] - basePrice);
+         bool swap = (dj > di);
+         if(!swap && MathAbs(dj - di) < gridStep * 0.5 && negTypes[j] < negTypes[i])
+            swap = true;
+         if(swap)
+         {
+            ulong t = negTickets[i]; negTickets[i] = negTickets[j]; negTickets[j] = t;
+            double p = negPls[i]; negPls[i] = negPls[j]; negPls[j] = p;
+            double v = negVols[i]; negVols[i] = negVols[j]; negVols[j] = v;
+            double op = negOpenPrices[i]; negOpenPrices[i] = negOpenPrices[j]; negOpenPrices[j] = op;
+            int tt = negTypes[i]; negTypes[i] = negTypes[j]; negTypes[j] = tt;
+         }
+      }
+
+   // Close exactly 2 orders: top positive + top negative
+   ulong posTicket = posTickets[0];
+   ulong negTicket = negTickets[0];
+   int posType = posTypes[0];
+   int negType = negTypes[0];
+   double posPr = posPls[0];
+   double negPr = negPls[0]; // negative
+   double posVol = posVols[0];
+   double negVol = negVols[0];
+
+   double balanceFloor = sessionStartBalance + lockedProfitReserve;
+   double balanceNow = AccountInfoDouble(ACCOUNT_BALANCE);
+   bool anyClosed = false;
+
+   // Close profitable first (this helps margin/floor)
+   if(PositionCloseWithComment(posTicket, "Balance open (no TP) profit order"))
+   {
+      sessionClosedProfitRemaining += posPr;
+      balanceNow += posPr;
+      anyClosed = true;
+      // cooldown timestamp for this type
+      if(posType == 0) lastBalanceAAByBBCloseTime = TimeCurrent();
+      else if(posType == 1) lastBalanceBBCloseTime = TimeCurrent();
+      else if(posType == 2) lastBalanceCCCloseTime = TimeCurrent();
+   }
+
+   // Close losing opposite-side (ensure we don't drop below floor)
+   if(negPr < 0.0)
+   {
+      double absLoss = -negPr;
+      double volClose = negVol;
+      double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+      double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+      // If closing full would push balance below floor, close partial proportionally
+      double realizedPnLfull = negPr; // full volume
+      double balanceAfterFull = balanceNow + realizedPnLfull;
+      if(balanceAfterFull < balanceFloor)
+      {
+         // volClose/negVol = (balanceFloor - balanceNow) / negPr
+         double ratio = 0.0;
+         if(negPr != 0.0)
+            ratio = (balanceFloor - balanceNow) / negPr; // negPr <0, (floor-balanceNow) <=0 typically -> ratio >=0
+         if(ratio < 0.0) ratio = 0.0;
+         if(ratio > 1.0) ratio = 1.0;
+         volClose = negVol * ratio;
+         volClose = MathFloor(volClose / lotStep) * lotStep;
+      }
+      if(volClose >= (negVol - lotStep * 0.5))
+      {
+         if(PositionCloseWithComment(negTicket, "Balance open (no TP) loss order"))
+         {
+            sessionClosedProfitRemaining += negPr;
+            anyClosed = true;
+            if(negType == 0) lastBalanceAAByBBCloseTime = TimeCurrent();
+            else if(negType == 1) lastBalanceBBCloseTime = TimeCurrent();
+            else if(negType == 2) lastBalanceCCCloseTime = TimeCurrent();
+         }
+      }
+      else
+      {
+         if(volClose >= minLot && PositionClosePartialWithComment(negTicket, volClose, "Balance open (no TP) loss order"))
+         {
+            double realizedPnL = (volClose / negVol) * negPr; // negative
+            sessionClosedProfitRemaining += realizedPnL;
+            anyClosed = true;
+            if(negType == 0) lastBalanceAAByBBCloseTime = TimeCurrent();
+            else if(negType == 1) lastBalanceBBCloseTime = TimeCurrent();
+            else if(negType == 2) lastBalanceCCCloseTime = TimeCurrent();
+         }
+      }
+   }
+
+   return anyClosed;
 }
 
 bool ScheduleRestartDelayAfterReset(const string reason)
@@ -547,6 +897,11 @@ void CheckTradingHoursAndAutoRestart()
       lastWithin = true;
       return;
    }
+   if(eaStoppedByRestartDelay)
+   {
+      lastWithin = within;
+      return;
+   }
    // Detect crossing out of the window while running -> stop pending until next reset
    if(lastWithin && !within && !eaStoppedBySchedule && !eaStoppedByTarget)
    {
@@ -564,7 +919,14 @@ void CheckTradingHoursAndAutoRestart()
    {
       eaStoppedBySchedule = false;
       scheduleStopPending = false;
-      if(!IsADXStartAllowed())
+      if(EnableWeekdaySchedule && !IsAllowedWeekday(now))
+      {
+         eaStoppedByWeekday = true;
+         if(EnableResetNotification || EnableTelegram)
+            SendResetNotification("Trading hours started: waiting for allowed weekday to start");
+         Print("Trading hours started but weekday is not allowed. EA will wait.");
+      }
+      else if(!IsADXStartAllowed())
       {
          eaStoppedByAdx = true;
          if(EnableResetNotification || EnableTelegram)
@@ -597,6 +959,8 @@ void CheckADXStartAndAutoRestart()
       return;
    if(eaStoppedByRestartDelay)
       return;
+   if(EnableWeekdaySchedule && !IsAllowedWeekday(TimeCurrent()))
+      return;
    if(!eaStoppedByAdx)
       return;
    if(eaStoppedByTarget)
@@ -623,6 +987,8 @@ void CheckRSIStartAndAutoRestart()
       return;
    if(eaStoppedByRestartDelay)
       return;
+   if(EnableWeekdaySchedule && !IsAllowedWeekday(TimeCurrent()))
+      return;
    if(!eaStoppedByRsi)
       return;
    if(eaStoppedByTarget)
@@ -643,6 +1009,86 @@ void CheckRSIStartAndAutoRestart()
    Print("RSI start condition met (cross). Restart EA, new base = ", basePrice);
 }
 
+void CheckWeekdayAndAutoRestart()
+{
+   if(!EnableWeekdaySchedule)
+      return;
+   datetime now = TimeCurrent();
+   bool allowed = IsAllowedWeekday(now);
+   static int lastKey = 0;
+   static bool lastAllowed = true;
+   int key = DateKey(now);
+   if(lastKey == 0)
+   {
+      lastKey = key;
+      lastAllowed = allowed;
+   }
+   // New day detection
+   if(key != lastKey)
+   {
+      // If a non-run day starts while EA is running, mark stop pending until next reset
+      if(lastAllowed && !allowed && !eaStoppedByWeekday && !eaStoppedByTarget)
+      {
+         weekdayStopPending = true;
+         if(EnableResetNotification || EnableTelegram)
+            SendResetNotification("Weekday schedule: non-run day started, stop pending (will stop on next reset)");
+         Print("Weekday schedule: non-run day started. EA will stop on next RESET.");
+      }
+      lastKey = key;
+      lastAllowed = allowed;
+   }
+
+   // If EA is weekday-stopped, restart only when today is allowed and not stopped by target, and not in restart delay
+   if(eaStoppedByWeekday && allowed && !eaStoppedByTarget && !eaStoppedByRestartDelay)
+   {
+      // Respect trading hours (if enabled)
+      if(EnableTradingHours && !IsWithinTradingHours(now))
+      {
+         eaStoppedBySchedule = true;
+         return;
+      }
+      // Respect start filters
+      if(!IsADXStartAllowed())
+      {
+         eaStoppedByAdx = true;
+         if(EnableResetNotification || EnableTelegram)
+            SendResetNotification("Weekday schedule: allowed day, waiting for ADX start condition");
+         return;
+      }
+      if(!IsRSIStartAllowed())
+      {
+         eaStoppedByRsi = true;
+         if(EnableResetNotification || EnableTelegram)
+            SendResetNotification("Weekday schedule: allowed day, waiting for RSI cross start condition");
+         return;
+      }
+      eaStoppedByWeekday = false;
+      weekdayStopPending = false;
+      basePrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      InitializeGridLevels();
+      ManageGridOrders();
+      if(EnableResetNotification || EnableTelegram)
+         SendResetNotification("Weekday schedule: EA started (allowed day)");
+      Print("Weekday schedule: allowed day. Restart EA, new base = ", basePrice);
+   }
+}
+
+void WeekdayStopOnResetIfNeeded(const string resetReason)
+{
+   if(!EnableWeekdaySchedule)
+      return;
+   datetime now = TimeCurrent();
+   if((!IsAllowedWeekday(now) && weekdayStopPending) || !IsAllowedWeekday(now))
+   {
+      eaStoppedByWeekday = true;
+      weekdayStopPending = false;
+      CancelAllPendingOrders();
+      Print("Weekday schedule: stop on RESET. EA will wait until next allowed day. Reason: ", resetReason);
+      if(EnableResetNotification || EnableTelegram)
+         SendResetNotification("Weekday schedule: EA stopped (waiting for allowed day)");
+   }
+}
+
 void CheckRestartDelayAndAutoRestart()
 {
    if(!eaStoppedByRestartDelay)
@@ -660,6 +1106,11 @@ void CheckRestartDelayAndAutoRestart()
    restartDelayUntil = 0;
    if(eaStoppedByTarget)
       return;
+   if(EnableWeekdaySchedule && !IsAllowedWeekday(now))
+   {
+      eaStoppedByWeekday = true;
+      return;
+   }
    if(EnableTradingHours && !IsWithinTradingHours(now))
    {
       eaStoppedBySchedule = true;
@@ -858,6 +1309,8 @@ int OnInit()
    eaStoppedByTarget = false;
    eaStoppedBySchedule = false;
    scheduleStopPending = false;
+   eaStoppedByWeekday = false;
+   weekdayStopPending = false;
    eaStoppedByAdx = false;
    eaStoppedByRsi = false;
    eaStoppedByRestartDelay = false;
@@ -876,6 +1329,13 @@ int OnInit()
       rsiHandle = iRSI(_Symbol, RSITimeframe, per, PRICE_CLOSE);
       if(rsiHandle == INVALID_HANDLE)
          Print("VP-Grid: failed to create RSI handle. err=", GetLastError());
+   }
+   if(EnableRSIBalanceFilter)
+   {
+      int perBal = MathMax(2, RSIPeriod);
+      rsiBalanceHandle = iRSI(_Symbol, RSIBalanceTimeframe, perBal, PRICE_CLOSE);
+      if(rsiBalanceHandle == INVALID_HANDLE)
+         Print("VP-Grid: failed to create RSI(Balance) handle. err=", GetLastError());
    }
    balanceGoc = (BaseCapitalUSD > 0) ? BaseCapitalUSD : AccountInfoDouble(ACCOUNT_BALANCE);
    attachBalance = AccountInfoDouble(ACCOUNT_BALANCE);   // Initial capital: balance when EA is first added (for panel only)
@@ -903,6 +1363,14 @@ int OnInit()
       if(EnableResetNotification)
          SendResetNotification("Trading hours: waiting for start window");
       Print("Trading hours: outside window at init. EA will wait for start time.");
+      return(INIT_SUCCEEDED);
+   }
+   if(EnableWeekdaySchedule && !IsAllowedWeekday(TimeCurrent()))
+   {
+      eaStoppedByWeekday = true;
+      if(EnableResetNotification || EnableTelegram)
+         SendResetNotification("Weekday schedule: waiting for allowed day to start");
+      Print("Weekday schedule: today is not allowed. EA will wait.");
       return(INIT_SUCCEEDED);
    }
    if(!IsADXStartAllowed())
@@ -968,6 +1436,11 @@ void OnDeinit(const int reason)
       IndicatorRelease(rsiHandle);
       rsiHandle = INVALID_HANDLE;
    }
+   if(rsiBalanceHandle != INVALID_HANDLE)
+   {
+      IndicatorRelease(rsiBalanceHandle);
+      rsiBalanceHandle = INVALID_HANDLE;
+   }
    if(EnableResetNotification || EnableTelegram)
    {
       UpdateSessionStatsForNotification();
@@ -982,11 +1455,12 @@ void OnDeinit(const int reason)
 void OnTick()
 {
    CheckDailyRolloverAndAutoRestart();
+   CheckWeekdayAndAutoRestart();
    CheckTradingHoursAndAutoRestart();
    CheckRestartDelayAndAutoRestart();
    CheckADXStartAndAutoRestart();
    CheckRSIStartAndAutoRestart();
-   if(eaStoppedByTarget || eaStoppedBySchedule || eaStoppedByAdx || eaStoppedByRsi || eaStoppedByRestartDelay)
+   if(eaStoppedByTarget || eaStoppedBySchedule || eaStoppedByWeekday || eaStoppedByAdx || eaStoppedByRsi || eaStoppedByRestartDelay)
       return;
 
    ProcessVirtualPendingExecutions();   // Virtual pendings: trigger -> market before trailing/balance logic
@@ -1055,6 +1529,7 @@ void OnTick()
                   UpdateSessionMultiplierFromAccountGrowth();
                   DailyStopOnResetAccumulateAndMaybeStop("Trailing profit (lock)");
                   TradingHoursStopOnResetIfNeeded("Trailing profit (lock)");
+                  WeekdayStopOnResetIfNeeded("Trailing profit (lock)");
                   lastResetTime = TimeCurrent();
                   sessionClosedProfit = 0.0;
                   sessionLockedProfit = 0.0;
@@ -1073,7 +1548,8 @@ void OnTick()
                   lastSellTrailPrice = 0.0;
                   ClearBalanceSelection();
                   balancePrepareDirection = 0;
-                  if(ScheduleRestartDelayAfterReset("Trailing profit reset"))
+                  ScheduleRestartDelayAfterReset("Trailing profit reset");
+                  if(eaStoppedByWeekday || eaStoppedByRestartDelay)
                      return;
                   if(!IsADXStartAllowed())
                   {
@@ -1117,6 +1593,7 @@ void OnTick()
          UpdateSessionMultiplierFromAccountGrowth();
          DailyStopOnResetAccumulateAndMaybeStop("Session profit target");
          TradingHoursStopOnResetIfNeeded("Session profit target");
+         WeekdayStopOnResetIfNeeded("Session profit target");
          lastResetTime = TimeCurrent();
          sessionClosedProfit = 0.0;
          sessionLockedProfit = 0.0;
@@ -1136,7 +1613,8 @@ void OnTick()
          ClearBalanceSelection();
          balancePrepareDirection = 0;
 
-         if(ScheduleRestartDelayAfterReset("Session target reset"))
+         ScheduleRestartDelayAfterReset("Session target reset");
+         if(eaStoppedByWeekday || eaStoppedByRestartDelay)
             return;
          if(!IsADXStartAllowed())
          {
@@ -1206,6 +1684,7 @@ void OnTick()
             UpdateSessionMultiplierFromAccountGrowth();
             DailyStopOnResetAccumulateAndMaybeStop("Levels match + session target");
             TradingHoursStopOnResetIfNeeded("Levels match + session target");
+            WeekdayStopOnResetIfNeeded("Levels match + session target");
             lastResetTime = TimeCurrent();
             sessionClosedProfit = 0.0;
             sessionLockedProfit = 0.0;
@@ -1225,7 +1704,8 @@ void OnTick()
             ClearBalanceSelection();
             balancePrepareDirection = 0;
 
-            if(ScheduleRestartDelayAfterReset("Level match reset"))
+            ScheduleRestartDelayAfterReset("Level match reset");
+            if(eaStoppedByWeekday || eaStoppedByRestartDelay)
                return;
             if(!IsADXStartAllowed())
             {
@@ -1274,6 +1754,7 @@ void OnTick()
          UpdateSessionMultiplierFromAccountGrowth();
          DailyStopOnResetAccumulateAndMaybeStop("Trailing SL hit");
          TradingHoursStopOnResetIfNeeded("Trailing SL hit");
+         WeekdayStopOnResetIfNeeded("Trailing SL hit");
          lastResetTime = TimeCurrent();
          gongLaiMode = false;
          trailingGocBuy = 0.0;
@@ -1293,7 +1774,8 @@ void OnTick()
          sessionPeakProfit = 0.0;
          ClearBalanceSelection();
          balancePrepareDirection = 0;
-         if(ScheduleRestartDelayAfterReset("Trailing SL reset"))
+         ScheduleRestartDelayAfterReset("Trailing SL reset");
+         if(eaStoppedByWeekday || eaStoppedByRestartDelay)
             return;
          if(!IsADXStartAllowed())
          {
@@ -1492,6 +1974,14 @@ void SendResetNotification(const string reason)
          msg += "Trading hours: EA is WAITING for next start\n";
       else if(scheduleStopPending)
          msg += "Trading hours: stop pending (will stop on next reset)\n";
+   }
+   if(EnableWeekdaySchedule)
+   {
+      msg += "Weekday schedule: enabled\n";
+      if(eaStoppedByWeekday)
+         msg += "Weekday schedule: EA is WAITING for allowed day\n";
+      else if(weekdayStopPending)
+         msg += "Weekday schedule: stop pending (will stop on next reset)\n";
    }
    if(EnableADXStartFilter)
    {
@@ -1914,11 +2404,12 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
    if(HistoryDealGetInteger(trans.deal, DEAL_REASON) != DEAL_REASON_TP)
       return;
 
-   // Re-arm delay: when a TP close happens, block re-placing the same strategy+level for X minutes.
+   // Re-arm: when a TP close happens, block re-placing the same strategy+level for X minutes,
+   // then require current price to be at least 1 grid step away before re-adding the virtual pending at that level.
    {
       long dealMagic0 = HistoryDealGetInteger(trans.deal, DEAL_MAGIC);
       int delaySec = RearmDelaySecondsForMagic(dealMagic0);
-      if(delaySec > 0)
+      if(delaySec >= 0)
       {
          string cmt = HistoryDealGetString(trans.deal, DEAL_COMMENT);
          int levelNum = 0;
@@ -1926,8 +2417,11 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
          {
             datetime until = TimeCurrent() + delaySec;
             SetRearmBlock(dealMagic0, levelNum, until);
-            Print("VP-Grid re-arm delay: ", StrategyTagFromMagic(dealMagic0), " L", (levelNum > 0 ? "+" : ""), levelNum,
-                  " blocked until ", TimeToString(until, TIME_DATE|TIME_MINUTES));
+            if(delaySec > 0)
+            {
+               Print("VP-Grid re-arm delay: ", StrategyTagFromMagic(dealMagic0), " L", (levelNum > 0 ? "+" : ""), levelNum,
+                     " blocked until ", TimeToString(until, TIME_DATE|TIME_MINUTES));
+            }
          }
       }
    }
@@ -2302,7 +2796,8 @@ void DoBalanceAll()
 {
    bool anyBalance = (EnableAA && EnableBalanceAAByBB && BALANCE_THRESHOLD_USD_DEFAULT > 0) ||
                      (EnableBB && EnableBalanceBB && BALANCE_THRESHOLD_USD_DEFAULT > 0) ||
-                     (EnableCC && EnableBalanceCC && BALANCE_THRESHOLD_USD_DEFAULT > 0);
+                     (EnableCC && EnableBalanceCC && BALANCE_THRESHOLD_USD_DEFAULT > 0) ||
+                     (EnableBalanceOpenAcrossBaseNoTP && BalanceOpenAcrossBaseNoTP_XUSD > 0);
    if(!anyBalance)
       return;
    if(sessionClosedProfitRemaining < 0)
@@ -2314,12 +2809,26 @@ void DoBalanceAll()
       minCooldown = (minCooldown == 0) ? BALANCE_COOLDOWN_SEC_DEFAULT : MathMin(minCooldown, BALANCE_COOLDOWN_SEC_DEFAULT);
    if(EnableCC && EnableBalanceCC && BALANCE_THRESHOLD_USD_DEFAULT > 0 && BALANCE_COOLDOWN_SEC_DEFAULT > 0)
       minCooldown = (minCooldown == 0) ? BALANCE_COOLDOWN_SEC_DEFAULT : MathMin(minCooldown, BALANCE_COOLDOWN_SEC_DEFAULT);
+   if(EnableBalanceOpenAcrossBaseNoTP && BALANCE_COOLDOWN_SEC_DEFAULT > 0)
+      minCooldown = (minCooldown == 0) ? BALANCE_COOLDOWN_SEC_DEFAULT : MathMin(minCooldown, BALANCE_COOLDOWN_SEC_DEFAULT);
    datetime lastClose = MathMax(lastBalanceAAByBBCloseTime, MathMax(lastBalanceBBCloseTime, lastBalanceCCCloseTime));
    if(minCooldown > 0 && lastClose > 0 && (TimeCurrent() - lastClose) < minCooldown)
       return;
+
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    bool priceAboveBase = (bid > basePrice);
    bool priceBelowBase = (bid < basePrice);
+   if((priceAboveBase || priceBelowBase) && !IsRSIBalanceAllowed(priceAboveBase))
+      return; // RSI balance filter blocks opposite-side loss closes
+
+   // New feature: balance open no-TP positions across base by +X/-X floating.
+   if(EnableBalanceOpenAcrossBaseNoTP && BalanceOpenAcrossBaseNoTP_XUSD > 0)
+   {
+      // If this feature is enabled, we allow closing opposite-side losing positions
+      // only when its condition is met.
+      BalanceOpenAcrossBaseNoTP(BalanceOpenAcrossBaseNoTP_XUSD);
+      return;
+   }
    int nLevels = ArraySize(gridLevels);
    int prepLevels = MathMax(1, MathMin(MaxGridLevels, BALANCE_PREPARE_LEVELS));
    int execLevels = MathMax(prepLevels, MathMin(MaxGridLevels, BALANCE_EXECUTE_LEVELS));
@@ -2539,6 +3048,8 @@ void EnsureOrderAtLevel(ENUM_ORDER_TYPE orderType, double priceLevel, int levelN
 {
    if(IsRearmBlocked(MagicAA, levelNum))
       return;
+   if(IsRearmDistanceBlocked(MagicAA, levelNum, priceLevel))
+      return;
    ulong  ticket       = 0;
    double existingPrice = 0.0;
    if(GetPendingOrderAtLevel(orderType, priceLevel, ticket, existingPrice, MagicAA))
@@ -2553,6 +3064,7 @@ void EnsureOrderAtLevel(ENUM_ORDER_TYPE orderType, double priceLevel, int levelN
    if(!CanPlaceOrderAtLevel(orderType, priceLevel, MagicAA))
       return;
    PlacePendingOrder(orderType, priceLevel, levelNum);
+   RemoveRearmBlock(MagicAA, levelNum);
 }
 
 //+------------------------------------------------------------------+
@@ -2561,6 +3073,8 @@ void EnsureOrderAtLevel(ENUM_ORDER_TYPE orderType, double priceLevel, int levelN
 void EnsureOrderAtLevelBB(bool isBuyStop, double priceLevel, int levelNum)
 {
    if(IsRearmBlocked(MagicBB, levelNum))
+      return;
+   if(IsRearmDistanceBlocked(MagicBB, levelNum, priceLevel))
       return;
    ulong ticket = 0;
    double existingPrice = 0.0;
@@ -2576,6 +3090,7 @@ void EnsureOrderAtLevelBB(bool isBuyStop, double priceLevel, int levelNum)
    if(!CanPlaceOrderAtLevel(isBuyStop ? ORDER_TYPE_BUY_STOP : ORDER_TYPE_SELL_STOP, priceLevel, MagicBB))
       return;
    PlacePendingOrderBB(isBuyStop, priceLevel, levelNum);
+   RemoveRearmBlock(MagicBB, levelNum);
 }
 
 //+------------------------------------------------------------------+
@@ -2584,6 +3099,8 @@ void EnsureOrderAtLevelBB(bool isBuyStop, double priceLevel, int levelNum)
 void EnsureOrderAtLevelCC(bool isBuyStop, double priceLevel, int levelNum)
 {
    if(IsRearmBlocked(MagicCC, levelNum))
+      return;
+   if(IsRearmDistanceBlocked(MagicCC, levelNum, priceLevel))
       return;
    ulong ticket = 0;
    double existingPrice = 0.0;
@@ -2599,6 +3116,7 @@ void EnsureOrderAtLevelCC(bool isBuyStop, double priceLevel, int levelNum)
    if(!CanPlaceOrderAtLevel(isBuyStop ? ORDER_TYPE_BUY_STOP : ORDER_TYPE_SELL_STOP, priceLevel, MagicCC))
       return;
    PlacePendingOrderCC(isBuyStop, priceLevel, levelNum);
+   RemoveRearmBlock(MagicCC, levelNum);
 }
 
 //+------------------------------------------------------------------+
@@ -2607,6 +3125,8 @@ void EnsureOrderAtLevelCC(bool isBuyStop, double priceLevel, int levelNum)
 void EnsureOrderAtLevelDD(bool sellAboveBase, double priceLevel, int levelNum)
 {
    if(IsRearmBlocked(MagicDD, levelNum))
+      return;
+   if(IsRearmDistanceBlocked(MagicDD, levelNum, priceLevel))
       return;
    ulong ticket = 0;
    double existingPrice = 0.0;
@@ -2623,6 +3143,7 @@ void EnsureOrderAtLevelDD(bool sellAboveBase, double priceLevel, int levelNum)
    if(!CanPlaceOrderAtLevel(ot, priceLevel, MagicDD))
       return;
    PlacePendingOrderDD(sellAboveBase, priceLevel, levelNum);
+   RemoveRearmBlock(MagicDD, levelNum);
 }
 
 //+------------------------------------------------------------------+
