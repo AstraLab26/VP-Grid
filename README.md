@@ -151,6 +151,17 @@ Mặc định hiện tại: `EnableDailyStop = false`, `DailyProfitTargetUSD = 5
 
 Mặc định hiện tại: `EnableTradingHours = false`.
 
+### 8.1) WEEKDAYS (run days)
+- **EnableWeekdaySchedule**, **RunMonday..RunSunday**
+
+**Nguyên tắc**:
+- Nếu hôm nay là **ngày không chạy**:
+  - EA **đang chạy dở** vẫn tiếp tục chạy bình thường.
+  - Khi xảy ra **RESET** tiếp theo (trailing lock / trailing SL hit / session reset / levels match…) thì EA sẽ **dừng** và chuyển sang WAITING.
+  - EA sẽ **đợi đến ngày được chạy** rồi khởi động lại (đặt base tại giá lúc khởi động lại).
+
+Mặc định hiện tại: `EnableWeekdaySchedule = false`, `RunMonday..RunFriday = true`, `RunSaturday = false`, `RunSunday = false`.
+
 ### 9) START FILTER (ADX)
 - **EnableADXStartFilter**: chỉ cho EA “khởi động” khi ADX < ngưỡng.
 - **ADXTimeframe**, **ADXPeriod**, **ADXStartThreshold**
@@ -159,7 +170,7 @@ Mặc định hiện tại: `EnableTradingHours = false`.
 - EA **đang chạy** thì vẫn chạy bình thường (không bị tắt).
 - EA **đang dừng/chờ** (đợi giờ chạy hoặc vừa reset) thì chỉ khởi động lại khi **ADX < ADXStartThreshold**.
 
-Mặc định hiện tại: `EnableADXStartFilter = false`, `ADXTimeframe = M5`, `ADXPeriod = 14`, `ADXStartThreshold = 20`.
+Mặc định hiện tại: `EnableADXStartFilter = false`, `ADXTimeframe = M15`, `ADXPeriod = 14`, `ADXStartThreshold = 20`.
 
 ### 9.1) START FILTER (RSI cross)
 - **EnableRSIStartFilter**: chỉ cho EA “khởi động” khi RSI có tín hiệu cắt ngưỡng.
@@ -174,14 +185,46 @@ Mặc định hiện tại: `EnableADXStartFilter = false`, `ADXTimeframe = M5`,
 
 Mặc định hiện tại: `EnableRSIStartFilter = false`, `RSITimeframe = M15`, `RSIPeriod = 14`, `RSIUpperCross = 70`, `RSILowerCross = 30`.
 
+### 9.2) BALANCE FILTER (RSI)
+- **EnableRSIBalanceFilter**, **RSIBalanceTimeframe**, **RSIBalanceLookbackBars**, **RSIBalanceUpper**, **RSIBalanceLower**
+
+**Nguyên tắc** (chỉ áp dụng cho đóng lệnh âm ngược phía trong Balance AA/BB/CC):
+- Nếu giá hiện tại **trên** đường gốc: chỉ cho phép đóng balance khi RSI nến đóng gần nhất **> RSIBalanceUpper** và trong `RSIBalanceLookbackBars` nến gần nhất có RSI vượt ngưỡng này.
+- Nếu giá hiện tại **dưới** đường gốc: chỉ cho phép đóng balance khi RSI nến đóng gần nhất **< RSIBalanceLower** và trong `RSIBalanceLookbackBars` nến gần nhất có RSI dưới ngưỡng này.
+
+Mặc định hiện tại: `EnableRSIBalanceFilter = true`, `RSIBalanceTimeframe = M5`, `RSIBalanceLookbackBars = 10`, `RSIBalanceUpper = 70`, `RSIBalanceLower = 30`.
+
+### 9.3) BALANCE ACROSS BASE (open, no TP)
+- **EnableBalanceOpenAcrossBaseNoTP**
+- **BalanceOpenAcrossBaseNoTP_XUSD** (X)
+- **BalanceOpenAcrossBaseNoTP_MinDistanceLevels** (N): giá hiện tại phải cách `base` ít nhất N bậc lưới (default N=3)
+
+Mặc định hiện tại: `EnableBalanceOpenAcrossBaseNoTP = true`, `BalanceOpenAcrossBaseNoTP_XUSD = 20`, `BalanceOpenAcrossBaseNoTP_MinDistanceLevels = 3`.
+
+**Nguyên tắc** (áp dụng cho đóng lệnh trong Balance AA/BB/CC):
+- Xét giá hiện tại so với `base` để xác định **cùng phía** và **bên kia phía** qua đường gốc.
+- EA chỉ chạy chế độ này khi khoảng cách hiện tại đến `base` >= `N * gridStep` (tức ít nhất N bậc lưới).
+- Lấy các lệnh **AA/BB/CC** đang mở mà **chưa có TP** (TP <= 0).
+- Tính:
+  - `sumPos`: tổng **profit dương** của các lệnh **cùng phía** (no TP)
+  - `sumNegAbs`: tổng **|loss|** của các lệnh **bên kia phía** (no TP)
+- Nếu `sumPos + sumNegAbs >= X` thì EA sẽ **đóng 2 lệnh**:
+  - 1 lệnh **profit dương** ở phía cùng phía
+  - 1 lệnh **loss âm** ở phía bên kia
+- Nếu lệnh dương **không đủ** để đóng hết lệnh âm đối diện, EA có thể **đóng một phần lệnh âm** (partial close) theo tỷ lệ phù hợp.
+
+**Ghi chú**:
+- Nếu `EnableRSIBalanceFilter` đang bật thì cơ chế này vẫn có thể bị chặn theo điều kiện RSI balance (vì nó nằm trong `DoBalanceAll()`).
+
 ### 10) RE-ARM DELAY (after TP)
 - **RearmDelayMinutesAA/BB/CC/DD**
 
 **Nguyên tắc**:
 - Khi 1 lệnh **đóng bằng TP** tại bậc nào thì EA sẽ **delay đặt lại** virtual pending đúng **(loại + bậc)** đó trong X phút.
+- Khi hết thời gian delay (hoặc nếu delay = 0), EA **chỉ bổ sung lại** virtual pending tại bậc đó khi **giá hiện tại cách bậc đó tối thiểu 1 bậc lưới** (khoảng cách ≥ `gridStep`).
 - Các bậc khác vẫn đặt lại bình thường.
 
-Mặc định hiện tại: `RearmDelayMinutesAA/BB/CC/DD = 10`.
+Mặc định hiện tại: `RearmDelayMinutesAA/BB/CC/DD = 20`.
 
 ### 11) SESSION RESET (profit target)
 - **EnableSessionProfitReset**
@@ -227,7 +270,7 @@ Mặc định: `EnableResetWhenLevelsMatch = true`, `LevelMatchRequiredLevels = 
 - Chỉ áp dụng cho các lần **RESET** (trailing lock / trailing SL hit / session reset / levels match…).
 - Khi đến thời điểm restart, EA vẫn phải thỏa các điều kiện đang bật như **Trading hours**, **ADX start filter**, **RSI start filter**; nếu chưa thỏa thì EA tiếp tục WAITING theo đúng điều kiện đó.
 
-Mặc định hiện tại: `RestartDelayMinutesAfterReset = 5`.
+Mặc định hiện tại: `RestartDelayMinutesAfterReset = 0`.
 
 ## Ví dụ cấu hình
 
@@ -266,7 +309,7 @@ Mục tiêu: DD lot nhỏ, TP đều; AA/BB/CC dùng balance để giảm lệnh
 Mục tiêu: khi tổng floating đạt ngưỡng thì hủy pending, bỏ TP, bắt đầu trailing SL.
 
 - `EnableTrailingTotalProfit = true`
-- `TrailingThresholdUSD = 50`
+- `TrailingThresholdUSD = 100`
 - `TrailingDropMode = TRAILING_MODE_RETURN` (an toàn hơn để thoát trailing nếu chưa kịp đặt SL)
 - `TrailingDropPct = 20`
 - `TrailingPointAPips = 1000`
