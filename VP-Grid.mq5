@@ -194,9 +194,9 @@ input double SessionProfitTargetUSD = 500.0;    // Session target (USD)
 //| 12. RESET WHEN LEVELS MATCH (price above base)                     |
 //+------------------------------------------------------------------+
 input group "=== 12. RESET WHEN LEVELS MATCH ==="
-input bool EnableResetWhenLevelsMatch = false;  // Reset EA when all 4 conditions below are met
-input int LevelMatchRequiredLevels = 4;        // X: (1) max level above base = X, (2) max level below base = X (0 = any)
-input double LevelMatchSessionTargetUSD = 50.0; // (3) Session P/L (closed + open) >= this USD. (4) Trailing total profit mode not active
+input bool EnableResetWhenLevelsMatch = true;   // Reset EA when all 4 conditions below are met
+input double LevelMatchMinDistancePips = 5000.0; // X pips: require at least one open order above base and one below base, each at distance >= X pips
+input double LevelMatchSessionTargetUSD = -100.0; // (3) Session P/L (closed + open) >= this USD. (4) Trailing total profit mode not active
 
 //+------------------------------------------------------------------+
 //| 13. RESTART DELAY (after RESET)                                   |
@@ -1662,15 +1662,18 @@ void OnTick()
       }
    }
 
-   // Reset when: price above base, count(positions above) = max level above, count(positions below) = min level below, session P/L >= target. Disabled during gongLaiMode.
-   if(!gongLaiMode && EnableResetWhenLevelsMatch && LevelMatchSessionTargetUSD > 0)
+   // Reset when: there is at least one order above base and one below base,
+   // each with distance from base >= X pips, and session P/L meets target.
+   // Disabled during gongLaiMode.
+   if(!gongLaiMode && EnableResetWhenLevelsMatch && LevelMatchSessionTargetUSD != 0)
    {
       double bidNow = SymbolInfoDouble(_Symbol, SYMBOL_BID);
       if((bidNow > basePrice || bidNow < basePrice) && gridStep > 0)
       {
-         int countAbove = 0, countBelow = 0;
-         int maxLevelAbove = 0;   // highest level index (1..N) that has at least one position above base
-         int maxLevelBelow = 0;   // highest level index (1..N) that has at least one position below base (farthest from base)
+         double pipSize = (dgt == 5 || dgt == 3) ? (pnt * 10.0) : pnt;
+         double minDistPrice = MathMax(0.0, LevelMatchMinDistancePips) * pipSize;
+         bool hasAboveMinDist = false;
+         bool hasBelowMinDist = false;
          for(int i = 0; i < PositionsTotal(); i++)
          {
             ulong ticket = PositionGetTicket(i);
@@ -1680,23 +1683,26 @@ void OnTick()
             double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
             if(openPrice > basePrice)
             {
-               countAbove++;
-               int lev = (int)MathRound((openPrice - basePrice) / gridStep);
-               if(lev < 1) lev = 1;
-               if(lev > maxLevelAbove) maxLevelAbove = lev;
+               if((openPrice - basePrice) >= minDistPrice)
+                  hasAboveMinDist = true;
             }
             else if(openPrice < basePrice)
             {
-               countBelow++;
-               int lev = (int)MathRound((basePrice - openPrice) / gridStep);
-               if(lev < 1) lev = 1;
-               if(lev > maxLevelBelow) maxLevelBelow = lev;
+               if((basePrice - openPrice) >= minDistPrice)
+                  hasBelowMinDist = true;
             }
+            if(hasAboveMinDist && hasBelowMinDist)
+               break;
          }
-         double totalSessionLM = (AccountInfoDouble(ACCOUNT_BALANCE) - sessionStartBalance) + floating;
-         if(maxLevelAbove > 0 && maxLevelBelow > 0
-            && (LevelMatchRequiredLevels <= 0 || (maxLevelAbove >= LevelMatchRequiredLevels && maxLevelBelow >= LevelMatchRequiredLevels))
-            && countAbove == maxLevelAbove && countBelow == maxLevelBelow && totalSessionLM >= LevelMatchSessionTargetUSD)
+        double totalSessionLM = (AccountInfoDouble(ACCOUNT_BALANCE) - sessionStartBalance) + floating;
+        // When TP closes a profitable deal, EA may reserve ("lock") a % of that profit as savings.
+        // For this reset mode, use net P/L after subtracting the reserved savings in current session.
+        double effectiveSessionLM = totalSessionLM - ((EnableLockProfit && LockProfitPct > 0) ? sessionLockedProfit : 0.0);
+
+        // For positive target: reset when P/L >= target
+        // For negative target (e.g., -100): reset when P/L >= -100 (i.e., loss is not worse than -100)
+        bool targetMet = (effectiveSessionLM >= LevelMatchSessionTargetUSD);
+         if(hasAboveMinDist && hasBelowMinDist && targetMet)
          {
             CloseAllPositionsAndOrders();
             UpdateSessionMultiplierFromAccountGrowth();
@@ -1744,7 +1750,10 @@ void OnTick()
 
             basePrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
             InitializeGridLevels();
-            Print("Level match reset: above=", countAbove, " (maxLv=", maxLevelAbove, ") below=", countBelow, " (maxLv=", maxLevelBelow, ") session P/L ", DoubleToString(totalSessionLM, 2), " >= ", DoubleToString(LevelMatchSessionTargetUSD, 2), ". New base = ", basePrice);
+            Print("Level match reset: distance above/below >= ", DoubleToString(LevelMatchMinDistancePips, 1), " pips, effective session P/L ",
+                  DoubleToString(effectiveSessionLM, 2), " (raw=", DoubleToString(totalSessionLM, 2),
+                  ", lockedSavings=", DoubleToString(sessionLockedProfit, 2),
+                  ") >= ", DoubleToString(LevelMatchSessionTargetUSD, 2), ". New base = ", basePrice);
             if(EnableResetNotification || EnableTelegram)
                SendResetNotification("Levels match + session target reached - reset");
             if(!eaStoppedByTarget && !eaStoppedBySchedule && !eaStoppedByAdx && !eaStoppedByRsi)
