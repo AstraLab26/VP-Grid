@@ -2,9 +2,12 @@
 //|                                                VP-Grid.mq5        |
 //|     VP-Grid - virtual pending grid AA/BB/CC/DD                     |
 //+------------------------------------------------------------------+
+// Allow wrapper versions (e.g., V3) to reuse this file while overriding #property fields.
+#ifndef VPGRID_SKIP_PROPERTIES
 #property copyright "VP-Grid"
 #property version   "2.12"
 #property description "VP-Grid: virtual pendings (AA/BB/CC Buy+Sell; DD Sell+Buy), capital scaling, trailing, session reset"
+#endif
 // Telegram: Add https://api.telegram.org to Tools -> Options -> Expert Advisors -> Allow WebRequest for listed URL
 
 #include <Trade\Trade.mqh>
@@ -196,7 +199,7 @@ input double SessionProfitTargetUSD = 500.0;    // Session target (USD)
 input group "=== 12. RESET WHEN LEVELS MATCH ==="
 input bool EnableResetWhenLevelsMatch = true;   // Reset EA when all 4 conditions below are met
 input double LevelMatchMinDistancePips = 5000.0; // X pips: require at least one open order above base and one below base, each at distance >= X pips
-input double LevelMatchSessionTargetUSD = -100.0; // (3) Session P/L (closed + open) >= this USD. (4) Trailing total profit mode not active
+input double LevelMatchSessionTargetUSD = 20.0; // (3) Session P/L (closed + open) >= this USD. (4) Trailing total profit mode not active
 
 //+------------------------------------------------------------------+
 //| 13. RESTART DELAY (after RESET)                                   |
