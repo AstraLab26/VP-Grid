@@ -60,10 +60,10 @@ input double TakeProfitPipsBB = 1500.0;         // BB: Take profit (pips; 0=off)
 input bool EnableBalanceBB = true;              // BB: Balance when (pool + loss) >= 20 USD; cooldown 300s. Prepare at 3 levels, execute at 5
 
 input group "--- 2.4 CC (virtual): BUY above base + SELL below base ---"
-input bool EnableCC = false;                      // CC: above base = virtual Buy; below base = virtual Sell
-input double LotSizeCC = 0.01;                    // CC: Lot size level 1
+input bool EnableCC = true;                      // CC: above base = virtual Buy; below base = virtual Sell
+input double LotSizeCC = 0.05;                    // CC: Lot size level 1
 input ENUM_LOT_SCALE CCLotScale = LOT_FIXED;     // CC: Fixed / Geometric
-input double LotMultCC = 1.1;                    // CC: Lot multiplier for level 2+ (Geometric)
+input double LotMultCC = 1.3;                    // CC: Lot multiplier for level 2+ (Geometric)
 input double MaxLotCC = 2.0;                     // CC: Max lot per order (0=no limit)
 input double TakeProfitPipsCC = 1500.0;          // CC: Take profit (pips; 0=off)
 input bool EnableBalanceCC = true;               // CC: Balance when (pool + loss) >= 20 USD; cooldown 300s. Prepare at 3 levels, execute at 5
@@ -173,9 +173,11 @@ input double RSIBalanceLower = 30.0;           // Price below base: require RSI 
 //| 9.3 BALANCE ACROSS BASE (open, no TP)                           |
 //+------------------------------------------------------------------+
 input group "=== 9.3 BALANCE ACROSS BASE (open, no TP) ==="
-input bool EnableBalanceOpenAcrossBaseNoTP = true; // Close opposite-side losing positions only when same-side TPless profit >= X
-input double BalanceOpenAcrossBaseNoTP_XUSD = 20.0;  // X USD
-input int BalanceOpenAcrossBaseNoTP_MinDistanceLevels = 3; // Current price must be at least this many grid steps away from base
+input bool EnableBalanceOpenAcrossBaseNoTP = true; // Enable mode: use profitable NO-TP positions to offset losing NO-TP positions across the base line
+input double BalanceOpenAcrossBaseNoTP_XPips = 10.0;  // Activation threshold (pips): run this balance logic only when combined pip condition reaches at least X
+input double BalanceClosePairMinSurplusPips = 10.0; // Per-close safety buffer (pips): after each positive+negative close pair, keep at least X pips surplus
+input int BalanceOpenAcrossBaseNoTP_MinDistanceLevels = 3; // Current price must be at least this many grid levels away from the base before balancing is allowed
+input bool EnableBalanceNoTPCloseTP = true; // Enable mode: use profitable NO-TP positions to offset losing TP positions on the opposite side (only if no opposite-side NO-TP loser exists)
 
 //+------------------------------------------------------------------+
 //| 10. RE-ARM DELAY (after TP)                                       |
@@ -198,7 +200,7 @@ input double SessionProfitTargetUSD = 500.0;    // Session target (USD)
 //+------------------------------------------------------------------+
 input group "=== 12. RESET WHEN LEVELS MATCH ==="
 input bool EnableResetWhenLevelsMatch = true;   // Reset EA when all 4 conditions below are met
-input double LevelMatchMinDistancePips = 4000.0; // X pips: require at least one open order above base and one below base, each at distance >= X pips
+input double LevelMatchMinDistancePips = 5000.0; // X pips: require at least one open order above base and one below base, each at distance >= X pips
 input double LevelMatchSessionTargetUSD = 20.0; // (3) Session P/L (closed + open) >= this USD. (4) Trailing total profit mode not active
 
 //+------------------------------------------------------------------+
@@ -549,17 +551,17 @@ bool IsRSIBalanceAllowed(bool priceAboveBase)
    }
 }
 
-// Balance: close opposite-side losing positions (no TP) only when same-side TPless profit >= X.
+// Balance: close opposite-side losing positions (no TP) only when same-side TPless pips >= X.
 // Condition (as per request):
-// - Same-side (relative to current price vs base): positions with TP not set (TP<=0) must have total profit >= X.
-// - Opposite-side: positions with TP not set must have total loss (abs) >= X.
+// - Same-side (relative to current price vs base): positions with TP not set (TP<=0) must have total positive pips.
+// - Opposite-side: positions with TP not set must have total negative pips (abs).
 // Action:
-// - Close opposite-side no-TP losing positions partially/fully until their total loss reaches about X.
-bool BalanceOpenAcrossBaseNoTP(double xUSD)
+// - Close opposite-side no-TP losing positions partially/fully until pips condition reaches X.
+bool BalanceOpenAcrossBaseNoTP(double xPips)
 {
    if(!EnableBalanceOpenAcrossBaseNoTP)
       return false;
-   if(xUSD <= 0.0)
+   if(xPips <= 0.0)
       return false;
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    bool priceAboveBase = (bid > basePrice);
@@ -579,30 +581,37 @@ bool BalanceOpenAcrossBaseNoTP(double xUSD)
    // then close 2 orders: one profitable (positive) on the same side and one losing (negative) on the opposite side.
    //
    // Only for our balanced magics (AA/BB/CC). DD is not included.
-   double sumPos = 0.0;
-   double sumNegAbs = 0.0;
+   double sumPosPips = 0.0;
+   double sumNegAbsPips = 0.0;
+   double pipSize = (dgt == 5 || dgt == 3) ? (pnt * 10.0) : pnt;
+   if(pipSize <= 0.0)
+      return false;
 
    // Candidate arrays
    ulong posTickets[];
    double posPls[];
    double posVols[];
    double posOpenPrices[];
+   double posPips[];
    int posTypes[]; // 0=AA,1=BB,2=CC
    ArrayResize(posTickets, 0);
    ArrayResize(posPls, 0);
    ArrayResize(posVols, 0);
    ArrayResize(posOpenPrices, 0);
+   ArrayResize(posPips, 0);
    ArrayResize(posTypes, 0);
 
    ulong negTickets[];
    double negPls[];       // negative
    double negVols[];
    double negOpenPrices[];
+   double negAbsPips[];
    int negTypes[];        // 0=AA,1=BB,2=CC
    ArrayResize(negTickets, 0);
    ArrayResize(negPls, 0);
    ArrayResize(negVols, 0);
    ArrayResize(negOpenPrices, 0);
+   ArrayResize(negAbsPips, 0);
    ArrayResize(negTypes, 0);
 
    for(int i = 0; i < PositionsTotal(); i++)
@@ -633,42 +642,53 @@ bool BalanceOpenAcrossBaseNoTP(double xUSD)
          continue; // must have no TP configured
 
       double pr = GetPositionPnL(ticket); // profit+swap+commission
-      if(isSameSide && pr > 0.0)
+      ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+      double priceNow = (posType == POSITION_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_BID) : SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      double signedPips = 0.0;
+      if(posType == POSITION_TYPE_BUY)
+         signedPips = (priceNow - openPrice) / pipSize;
+      else if(posType == POSITION_TYPE_SELL)
+         signedPips = (openPrice - priceNow) / pipSize;
+      if(isSameSide && signedPips > 0.0)
       {
-         sumPos += pr;
+         sumPosPips += signedPips;
          int n = ArraySize(posTickets);
          ArrayResize(posTickets, n + 1);
          ArrayResize(posPls, n + 1);
          ArrayResize(posVols, n + 1);
          ArrayResize(posOpenPrices, n + 1);
+         ArrayResize(posPips, n + 1);
          ArrayResize(posTypes, n + 1);
          posTickets[n] = ticket;
          posPls[n] = pr;
          posVols[n] = PositionGetDouble(POSITION_VOLUME);
          posOpenPrices[n] = openPrice;
+         posPips[n] = signedPips;
          posTypes[n] = typ;
       }
-      else if(isOppSide && pr < 0.0)
+      else if(isOppSide && signedPips < 0.0)
       {
-         double absLoss = -pr;
-         sumNegAbs += absLoss;
+         double absLossPips = -signedPips;
+         sumNegAbsPips += absLossPips;
          int n = ArraySize(negTickets);
          ArrayResize(negTickets, n + 1);
          ArrayResize(negPls, n + 1);
          ArrayResize(negVols, n + 1);
          ArrayResize(negOpenPrices, n + 1);
+         ArrayResize(negAbsPips, n + 1);
          ArrayResize(negTypes, n + 1);
          negTickets[n] = ticket;
          negPls[n] = pr; // negative
          negVols[n] = PositionGetDouble(POSITION_VOLUME);
          negOpenPrices[n] = openPrice;
+         negAbsPips[n] = absLossPips;
          negTypes[n] = typ;
       }
    }
 
    // Condition from request:
-   // (sumPos + sumNegAbs) >= X USD
-   if((sumPos + sumNegAbs) < xUSD)
+   // (sumPosPips + sumNegAbsPips) >= X pips
+   if((sumPosPips + sumNegAbsPips) < xPips)
       return false;
 
    if(ArraySize(posTickets) <= 0 || ArraySize(negTickets) <= 0)
@@ -690,6 +710,7 @@ bool BalanceOpenAcrossBaseNoTP(double xUSD)
             double p = posPls[i]; posPls[i] = posPls[j]; posPls[j] = p;
             double v = posVols[i]; posVols[i] = posVols[j]; posVols[j] = v;
             double op = posOpenPrices[i]; posOpenPrices[i] = posOpenPrices[j]; posOpenPrices[j] = op;
+            double pp = posPips[i]; posPips[i] = posPips[j]; posPips[j] = pp;
             int tt = posTypes[i]; posTypes[i] = posTypes[j]; posTypes[j] = tt;
          }
       }
@@ -710,6 +731,7 @@ bool BalanceOpenAcrossBaseNoTP(double xUSD)
             double p = negPls[i]; negPls[i] = negPls[j]; negPls[j] = p;
             double v = negVols[i]; negVols[i] = negVols[j]; negVols[j] = v;
             double op = negOpenPrices[i]; negOpenPrices[i] = negOpenPrices[j]; negOpenPrices[j] = op;
+            double np = negAbsPips[i]; negAbsPips[i] = negAbsPips[j]; negAbsPips[j] = np;
             int tt = negTypes[i]; negTypes[i] = negTypes[j]; negTypes[j] = tt;
          }
       }
@@ -721,86 +743,425 @@ bool BalanceOpenAcrossBaseNoTP(double xUSD)
    int negType = negTypes[0];
    double posPr = posPls[0];
    double negPr = negPls[0]; // negative
-   double posVol = posVols[0];
+   double posPip = posPips[0];
+   double negAbsPip = negAbsPips[0];
    double negVol = negVols[0];
+   double minSurplusPips = MathMax(0.0, BalanceClosePairMinSurplusPips);
+   if(negAbsPip <= 0.0 || posPip <= minSurplusPips)
+      return false;
 
    double balanceFloor = sessionStartBalance + lockedProfitReserve;
    double balanceNow = AccountInfoDouble(ACCOUNT_BALANCE);
    bool anyClosed = false;
-   bool posClosed = false;
+   if(negPr >= 0.0)
+      return false;
+   double absLoss = -negPr;
+   if(absLoss <= 0.0)
+      return false;
 
-   // Close profitable first (this helps margin/floor)
-   if(PositionCloseWithComment(posTicket, "Balance open (no TP) profit order"))
+   // Pre-calculate whether the negative leg can be closed (full/partial)
+   // before closing the positive leg.
+   double desiredPortion = posPr / absLoss;   // 0..1
+   if(desiredPortion > 1.0) desiredPortion = 1.0;
+   if(desiredPortion < 0.0) desiredPortion = 0.0;
+   double ratioAllowedByPipSurplus = (posPip - minSurplusPips) / negAbsPip;
+   if(ratioAllowedByPipSurplus < 0.0) ratioAllowedByPipSurplus = 0.0;
+   if(ratioAllowedByPipSurplus > 1.0) ratioAllowedByPipSurplus = 1.0;
+   desiredPortion = MathMin(desiredPortion, ratioAllowedByPipSurplus);
+
+   double ratioAllowedByFloor = 1.0;
+   double balanceAfterPos = balanceNow + posPr;
+   double balanceAfterFullLoss = balanceAfterPos + negPr; // negPr < 0
+   if(balanceAfterFullLoss < balanceFloor)
    {
-      sessionClosedProfitRemaining += posPr;
-      balanceNow += posPr;
-      anyClosed = true;
-      posClosed = true;
-      // cooldown timestamp for this type
-      if(posType == 0) lastBalanceAAByBBCloseTime = TimeCurrent();
-      else if(posType == 1) lastBalanceBBCloseTime = TimeCurrent();
-      else if(posType == 2) lastBalanceCCCloseTime = TimeCurrent();
+      ratioAllowedByFloor = (balanceFloor - balanceAfterPos) / negPr; // negPr < 0
+      if(ratioAllowedByFloor < 0.0) ratioAllowedByFloor = 0.0;
+      if(ratioAllowedByFloor > 1.0) ratioAllowedByFloor = 1.0;
+   }
+   desiredPortion = MathMin(desiredPortion, ratioAllowedByFloor);
+   if(desiredPortion <= 0.0)
+      return false;
+
+   double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double volClose = negVol * desiredPortion;
+   volClose = MathFloor(volClose / lotStep) * lotStep;
+   if(volClose < minLot)
+   {
+      double maxVolByPortion = negVol * desiredPortion;
+      double fallbackVol = 0.0;
+      if(0.02 >= minLot)
+      {
+         double v02 = MathCeil(0.02 / lotStep) * lotStep;
+         if(v02 <= maxVolByPortion && v02 <= negVol)
+            fallbackVol = v02;
+      }
+      if(fallbackVol <= 0.0 && 0.01 >= minLot)
+      {
+         double v01 = MathCeil(0.01 / lotStep) * lotStep;
+         if(v01 <= maxVolByPortion && v01 <= negVol)
+            fallbackVol = v01;
+      }
+      if(fallbackVol <= 0.0)
+         return false; // wait until enough to close negative side too
+      volClose = fallbackVol;
+      desiredPortion = volClose / negVol;
    }
 
-   // Close losing opposite-side (ensure we don't drop below floor)
-   if(negPr < 0.0 && posClosed)
+   // Close positive leg fully.
+   if(!PositionCloseWithComment(posTicket, "Balance open (no TP) profit order"))
+      return false;
+   sessionClosedProfitRemaining += posPr;
+   anyClosed = true;
+   if(posType == 0) lastBalanceAAByBBCloseTime = TimeCurrent();
+   else if(posType == 1) lastBalanceBBCloseTime = TimeCurrent();
+   else if(posType == 2) lastBalanceCCCloseTime = TimeCurrent();
+
+   // Close negative leg (full/partial).
+   if(desiredPortion >= 0.999 || volClose >= (negVol - lotStep * 0.5))
    {
-      double absLoss = -negPr;
-      if(absLoss <= 0.0) return anyClosed;
-
-      // New behavior: if the profitable position's amount is not enough to cover the whole losing position,
-      // allow closing only a fraction of the losing position.
-      // We estimate fraction by: posPr / absLoss (posPr > 0).
-      double desiredPortion = posPr / absLoss;   // 0..1 (if <1, partial close)
-      if(desiredPortion > 1.0) desiredPortion = 1.0;
-      if(desiredPortion < 0.0) desiredPortion = 0.0;
-
-      double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
-      double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
-
-      // Additionally ensure we don't drop below floor after closing.
-      // balanceAfterClose = balanceNow + (portion * negPr)
-      double ratioAllowedByFloor = 1.0;
-      double balanceAfterFullLoss = balanceNow + negPr; // negPr < 0
-      if(balanceAfterFullLoss < balanceFloor)
+      if(PositionCloseWithComment(negTicket, "Balance open (no TP) loss order"))
       {
-         // portionAllowed * negPr = balanceFloor - balanceNow
-         // portionAllowed = (balanceFloor - balanceNow) / negPr
-         ratioAllowedByFloor = (balanceFloor - balanceNow) / negPr; // negPr <0 -> ratio becomes positive
-         if(ratioAllowedByFloor < 0.0) ratioAllowedByFloor = 0.0;
-         if(ratioAllowedByFloor > 1.0) ratioAllowedByFloor = 1.0;
+         sessionClosedProfitRemaining += negPr;
+         if(negType == 0) lastBalanceAAByBBCloseTime = TimeCurrent();
+         else if(negType == 1) lastBalanceBBCloseTime = TimeCurrent();
+         else if(negType == 2) lastBalanceCCCloseTime = TimeCurrent();
       }
-      desiredPortion = MathMin(desiredPortion, ratioAllowedByFloor);
-
-      double volClose = negVol * desiredPortion;
-      volClose = MathFloor(volClose / lotStep) * lotStep;
-
-      if(volClose < minLot)
-         return anyClosed;
-
-      // If very close to full volume -> close full
-      if(desiredPortion >= 0.999 || volClose >= (negVol - lotStep * 0.5))
+   }
+   else
+   {
+      if(PositionClosePartialWithComment(negTicket, volClose, "Balance open (no TP) loss order"))
       {
-         if(PositionCloseWithComment(negTicket, "Balance open (no TP) loss order"))
+         double realizedPnL = (volClose / negVol) * negPr; // negative
+         sessionClosedProfitRemaining += realizedPnL;
+         if(negType == 0) lastBalanceAAByBBCloseTime = TimeCurrent();
+         else if(negType == 1) lastBalanceBBCloseTime = TimeCurrent();
+         else if(negType == 2) lastBalanceCCCloseTime = TimeCurrent();
+      }
+   }
+
+   return anyClosed;
+}
+
+// Balance variant:
+// - Source side: positions with NO TP (TP<=0), profitable, same side as current price vs base.
+// - Target side: positions WITH TP (TP>0), losing, opposite side of current price vs base.
+// - Guard: if ANY no-TP position is losing, do nothing.
+// - Trigger: (sum source pips + sum abs target pips) >= X pips.
+// - Action: close 1 profitable no-TP position, then close opposite losing TP position (partial allowed).
+bool BalanceNoTPCloseTP(double xPips)
+{
+   if(!EnableBalanceNoTPCloseTP)
+      return false;
+   if(xPips <= 0.0)
+      return false;
+
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   bool priceAboveBase = (bid > basePrice);
+   bool priceBelowBase = (bid < basePrice);
+   if(!priceAboveBase && !priceBelowBase)
+      return false;
+
+   if(gridStep <= 0)
+      return false;
+   double minDistPrice = gridStep * (double)MathMax(1, BalanceOpenAcrossBaseNoTP_MinDistanceLevels);
+   if(MathAbs(bid - basePrice) < minDistPrice)
+      return false;
+
+   double pipSize = (dgt == 5 || dgt == 3) ? (pnt * 10.0) : pnt;
+   if(pipSize <= 0.0)
+      return false;
+
+   // Source candidates: no-TP profitable
+   ulong srcTickets[];
+   double srcPls[];
+   double srcVols[];
+   double srcOpenPrices[];
+   double srcPips[];
+   int srcTypes[]; // 0=AA,1=BB,2=CC
+   bool srcAboveBase[];
+   ArrayResize(srcTickets, 0);
+   ArrayResize(srcPls, 0);
+   ArrayResize(srcVols, 0);
+   ArrayResize(srcOpenPrices, 0);
+   ArrayResize(srcPips, 0);
+   ArrayResize(srcTypes, 0);
+   ArrayResize(srcAboveBase, 0);
+
+   // Target candidates: with TP losing
+   ulong tgtTickets[];
+   double tgtPls[]; // negative
+   double tgtVols[];
+   double tgtOpenPrices[];
+   double tgtAbsPips[];
+   int tgtTypes[]; // 0=AA,1=BB,2=CC
+   bool tgtAboveBase[];
+   ArrayResize(tgtTickets, 0);
+   ArrayResize(tgtPls, 0);
+   ArrayResize(tgtVols, 0);
+   ArrayResize(tgtOpenPrices, 0);
+   ArrayResize(tgtAbsPips, 0);
+   ArrayResize(tgtTypes, 0);
+   ArrayResize(tgtAboveBase, 0);
+
+   double sumSrcPips = 0.0;
+   double sumTgtNegAbsPips = 0.0;
+
+   // Hard guard: if any opposite-side (vs current price) no-TP position is losing, skip this mode.
+   bool hasNegativeNoTPOppSide = false;
+
+   for(int i = 0; i < PositionsTotal(); i++)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket <= 0) continue;
+      if(!IsOurMagic(PositionGetInteger(POSITION_MAGIC)) || PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+      long magic = PositionGetInteger(POSITION_MAGIC);
+      int typ = -1;
+      if(magic == MagicAA) typ = 0;
+      else if(magic == MagicBB) typ = 1;
+      else if(magic == MagicCC) typ = 2;
+      else continue; // ignore DD
+
+      if(sessionStartTime > 0 && (datetime)PositionGetInteger(POSITION_TIME) < sessionStartTime)
+         continue;
+
+      double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+      bool isAboveBase = (openPrice > basePrice);
+      bool isBelowBase = (openPrice < basePrice);
+      if(!isAboveBase && !isBelowBase)
+         continue;
+
+      double tp = PositionGetDouble(POSITION_TP);
+      double pr = GetPositionPnL(ticket);
+      ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+      double priceNow = (posType == POSITION_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_BID) : SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      double signedPips = 0.0;
+      if(posType == POSITION_TYPE_BUY)
+         signedPips = (priceNow - openPrice) / pipSize;
+      else if(posType == POSITION_TYPE_SELL)
+         signedPips = (openPrice - priceNow) / pipSize;
+
+      bool sameSideAsPrice = (priceAboveBase && isAboveBase) || (priceBelowBase && isBelowBase);
+      bool oppSideAsPrice  = (priceAboveBase && isBelowBase) || (priceBelowBase && isAboveBase);
+
+      if(tp <= 0.0 && oppSideAsPrice && pr < 0.0)
+      {
+         hasNegativeNoTPOppSide = true;
+         break;
+      }
+
+      // Source: no-TP, profitable, and on the same side as current price.
+      // This ensures the positive leg is opposite the losing leg across base.
+      if(tp <= 0.0 && sameSideAsPrice && pr > 0.0 && signedPips > 0.0)
+      {
+         sumSrcPips += signedPips;
+         int n = ArraySize(srcTickets);
+         ArrayResize(srcTickets, n + 1);
+         ArrayResize(srcPls, n + 1);
+         ArrayResize(srcVols, n + 1);
+         ArrayResize(srcOpenPrices, n + 1);
+         ArrayResize(srcPips, n + 1);
+         ArrayResize(srcTypes, n + 1);
+         ArrayResize(srcAboveBase, n + 1);
+         srcTickets[n] = ticket;
+         srcPls[n] = pr;
+         srcVols[n] = PositionGetDouble(POSITION_VOLUME);
+         srcOpenPrices[n] = openPrice;
+         srcPips[n] = signedPips;
+         srcTypes[n] = typ;
+         srcAboveBase[n] = isAboveBase;
+      }
+      // Target: has TP, losing, and strictly on the opposite side of current price.
+      // Price above base => close only losers below base.
+      // Price below base => close only losers above base.
+      else if(tp > 0.0 && oppSideAsPrice && pr < 0.0 && signedPips < 0.0)
+      {
+         sumTgtNegAbsPips += (-signedPips);
+         int n = ArraySize(tgtTickets);
+         ArrayResize(tgtTickets, n + 1);
+         ArrayResize(tgtPls, n + 1);
+         ArrayResize(tgtVols, n + 1);
+         ArrayResize(tgtOpenPrices, n + 1);
+         ArrayResize(tgtAbsPips, n + 1);
+         ArrayResize(tgtTypes, n + 1);
+         ArrayResize(tgtAboveBase, n + 1);
+         tgtTickets[n] = ticket;
+         tgtPls[n] = pr;
+         tgtVols[n] = PositionGetDouble(POSITION_VOLUME);
+         tgtOpenPrices[n] = openPrice;
+         tgtAbsPips[n] = -signedPips;
+         tgtTypes[n] = typ;
+         tgtAboveBase[n] = isAboveBase;
+      }
+   }
+
+   if(hasNegativeNoTPOppSide)
+      return false;
+   if((sumSrcPips + sumTgtNegAbsPips) < xPips)
+      return false;
+   if(ArraySize(srcTickets) <= 0 || ArraySize(tgtTickets) <= 0)
+      return false;
+
+   // Sort source (profitable no-TP): farthest from base first; tie AA->BB->CC
+   int scnt = ArraySize(srcTickets);
+   for(int i = 0; i < scnt - 1; i++)
+      for(int j = i + 1; j < scnt; j++)
+      {
+         double di = MathAbs(srcOpenPrices[i] - basePrice);
+         double dj = MathAbs(srcOpenPrices[j] - basePrice);
+         bool sw = (dj > di);
+         if(!sw && MathAbs(dj - di) < gridStep * 0.5 && srcTypes[j] < srcTypes[i]) sw = true;
+         if(sw)
          {
-            sessionClosedProfitRemaining += negPr;
-            anyClosed = true;
-            if(negType == 0) lastBalanceAAByBBCloseTime = TimeCurrent();
-            else if(negType == 1) lastBalanceBBCloseTime = TimeCurrent();
-            else if(negType == 2) lastBalanceCCCloseTime = TimeCurrent();
+            ulong t = srcTickets[i]; srcTickets[i] = srcTickets[j]; srcTickets[j] = t;
+            double p = srcPls[i]; srcPls[i] = srcPls[j]; srcPls[j] = p;
+            double v = srcVols[i]; srcVols[i] = srcVols[j]; srcVols[j] = v;
+            double op = srcOpenPrices[i]; srcOpenPrices[i] = srcOpenPrices[j]; srcOpenPrices[j] = op;
+            double sp = srcPips[i]; srcPips[i] = srcPips[j]; srcPips[j] = sp;
+            int tt = srcTypes[i]; srcTypes[i] = srcTypes[j]; srcTypes[j] = tt;
+            bool sb = srcAboveBase[i]; srcAboveBase[i] = srcAboveBase[j]; srcAboveBase[j] = sb;
          }
       }
-      else
+
+   // Sort target (losing with TP): farthest from base first; tie AA->BB->CC
+   int tcnt = ArraySize(tgtTickets);
+   for(int i = 0; i < tcnt - 1; i++)
+      for(int j = i + 1; j < tcnt; j++)
       {
-         if(PositionClosePartialWithComment(negTicket, volClose, "Balance open (no TP) loss order"))
+         double di = MathAbs(tgtOpenPrices[i] - basePrice);
+         double dj = MathAbs(tgtOpenPrices[j] - basePrice);
+         bool sw = (dj > di);
+         if(!sw && MathAbs(dj - di) < gridStep * 0.5 && tgtTypes[j] < tgtTypes[i]) sw = true;
+         if(sw)
          {
-            double realizedPnL = (volClose / negVol) * negPr; // negative
-            sessionClosedProfitRemaining += realizedPnL;
-            anyClosed = true;
-            if(negType == 0) lastBalanceAAByBBCloseTime = TimeCurrent();
-            else if(negType == 1) lastBalanceBBCloseTime = TimeCurrent();
-            else if(negType == 2) lastBalanceCCCloseTime = TimeCurrent();
+            ulong t = tgtTickets[i]; tgtTickets[i] = tgtTickets[j]; tgtTickets[j] = t;
+            double p = tgtPls[i]; tgtPls[i] = tgtPls[j]; tgtPls[j] = p;
+            double v = tgtVols[i]; tgtVols[i] = tgtVols[j]; tgtVols[j] = v;
+            double op = tgtOpenPrices[i]; tgtOpenPrices[i] = tgtOpenPrices[j]; tgtOpenPrices[j] = op;
+            double tp = tgtAbsPips[i]; tgtAbsPips[i] = tgtAbsPips[j]; tgtAbsPips[j] = tp;
+            int tt = tgtTypes[i]; tgtTypes[i] = tgtTypes[j]; tgtTypes[j] = tt;
+            bool tb = tgtAboveBase[i]; tgtAboveBase[i] = tgtAboveBase[j]; tgtAboveBase[j] = tb;
          }
+      }
+
+   // Pick first pair that is truly across base: one above, one below.
+   int srcIdx = -1;
+   int tgtIdx = -1;
+   for(int si = 0; si < ArraySize(srcTickets) && srcIdx < 0; si++)
+   {
+      for(int ti = 0; ti < ArraySize(tgtTickets); ti++)
+      {
+         if(srcAboveBase[si] != tgtAboveBase[ti])
+         {
+            srcIdx = si;
+            tgtIdx = ti;
+            break;
+         }
+      }
+   }
+   if(srcIdx < 0 || tgtIdx < 0)
+      return false;
+
+   ulong srcTicket = srcTickets[srcIdx];
+   ulong tgtTicket = tgtTickets[tgtIdx];
+   int srcType = srcTypes[srcIdx];
+   int tgtType = tgtTypes[tgtIdx];
+   double srcPr = srcPls[srcIdx];
+   double tgtPr = tgtPls[tgtIdx]; // negative
+   double srcPip = srcPips[srcIdx];
+   double tgtAbsPip = tgtAbsPips[tgtIdx];
+   double tgtVol = tgtVols[tgtIdx];
+   double minSurplusPips = MathMax(0.0, BalanceClosePairMinSurplusPips);
+   if(tgtAbsPip <= 0.0 || srcPip <= minSurplusPips)
+      return false;
+
+   double balanceFloor = sessionStartBalance + lockedProfitReserve;
+   double balanceNow = AccountInfoDouble(ACCOUNT_BALANCE);
+   bool anyClosed = false;
+   if(tgtPr >= 0.0)
+      return false;
+   double absLoss = -tgtPr;
+   if(absLoss <= 0.0)
+      return false;
+
+   // Pre-calculate whether target losing TP leg can be closed (full/partial)
+   // before closing the profitable source leg.
+   double desiredPortion = srcPr / absLoss;
+   if(desiredPortion > 1.0) desiredPortion = 1.0;
+   if(desiredPortion < 0.0) desiredPortion = 0.0;
+   double ratioAllowedByPipSurplus = (srcPip - minSurplusPips) / tgtAbsPip;
+   if(ratioAllowedByPipSurplus < 0.0) ratioAllowedByPipSurplus = 0.0;
+   if(ratioAllowedByPipSurplus > 1.0) ratioAllowedByPipSurplus = 1.0;
+   desiredPortion = MathMin(desiredPortion, ratioAllowedByPipSurplus);
+
+   double ratioAllowedByFloor = 1.0;
+   double balanceAfterSrc = balanceNow + srcPr;
+   double balanceAfterFullLoss = balanceAfterSrc + tgtPr;
+   if(balanceAfterFullLoss < balanceFloor)
+   {
+      ratioAllowedByFloor = (balanceFloor - balanceAfterSrc) / tgtPr; // tgtPr < 0
+      if(ratioAllowedByFloor < 0.0) ratioAllowedByFloor = 0.0;
+      if(ratioAllowedByFloor > 1.0) ratioAllowedByFloor = 1.0;
+   }
+   desiredPortion = MathMin(desiredPortion, ratioAllowedByFloor);
+   if(desiredPortion <= 0.0)
+      return false;
+
+   double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double volClose = tgtVol * desiredPortion;
+   volClose = MathFloor(volClose / lotStep) * lotStep;
+   if(volClose < minLot)
+   {
+      double maxVolByPortion = tgtVol * desiredPortion;
+      double fallbackVol = 0.0;
+      if(0.02 >= minLot)
+      {
+         double v02 = MathCeil(0.02 / lotStep) * lotStep;
+         if(v02 <= maxVolByPortion && v02 <= tgtVol)
+            fallbackVol = v02;
+      }
+      if(fallbackVol <= 0.0 && 0.01 >= minLot)
+      {
+         double v01 = MathCeil(0.01 / lotStep) * lotStep;
+         if(v01 <= maxVolByPortion && v01 <= tgtVol)
+            fallbackVol = v01;
+      }
+      if(fallbackVol <= 0.0)
+         return false; // wait until enough to close negative side too
+      volClose = fallbackVol;
+      desiredPortion = volClose / tgtVol;
+   }
+
+   // Close source positive leg fully.
+   if(!PositionCloseWithComment(srcTicket, "Balance noTP->TP source"))
+      return false;
+   sessionClosedProfitRemaining += srcPr;
+   anyClosed = true;
+   if(srcType == 0) lastBalanceAAByBBCloseTime = TimeCurrent();
+   else if(srcType == 1) lastBalanceBBCloseTime = TimeCurrent();
+   else if(srcType == 2) lastBalanceCCCloseTime = TimeCurrent();
+
+   // Close target losing TP leg (full/partial).
+   if(desiredPortion >= 0.999 || volClose >= (tgtVol - lotStep * 0.5))
+   {
+      if(PositionCloseWithComment(tgtTicket, "Balance noTP->TP target"))
+      {
+         sessionClosedProfitRemaining += tgtPr;
+         if(tgtType == 0) lastBalanceAAByBBCloseTime = TimeCurrent();
+         else if(tgtType == 1) lastBalanceBBCloseTime = TimeCurrent();
+         else if(tgtType == 2) lastBalanceCCCloseTime = TimeCurrent();
+      }
+   }
+   else
+   {
+      if(PositionClosePartialWithComment(tgtTicket, volClose, "Balance noTP->TP target"))
+      {
+         double realizedPnL = (volClose / tgtVol) * tgtPr;
+         sessionClosedProfitRemaining += realizedPnL;
+         if(tgtType == 0) lastBalanceAAByBBCloseTime = TimeCurrent();
+         else if(tgtType == 1) lastBalanceBBCloseTime = TimeCurrent();
+         else if(tgtType == 2) lastBalanceCCCloseTime = TimeCurrent();
       }
    }
 
@@ -2827,7 +3188,8 @@ void DoBalanceAll()
    bool anyBalance = (EnableAA && EnableBalanceAAByBB && BALANCE_THRESHOLD_USD_DEFAULT > 0) ||
                      (EnableBB && EnableBalanceBB && BALANCE_THRESHOLD_USD_DEFAULT > 0) ||
                      (EnableCC && EnableBalanceCC && BALANCE_THRESHOLD_USD_DEFAULT > 0) ||
-                     (EnableBalanceOpenAcrossBaseNoTP && BalanceOpenAcrossBaseNoTP_XUSD > 0);
+                     (EnableBalanceOpenAcrossBaseNoTP && BalanceOpenAcrossBaseNoTP_XPips > 0) ||
+                     (EnableBalanceNoTPCloseTP && BalanceOpenAcrossBaseNoTP_XPips > 0);
    if(!anyBalance)
       return;
    if(sessionClosedProfitRemaining < 0)
@@ -2852,11 +3214,16 @@ void DoBalanceAll()
       return; // RSI balance filter blocks opposite-side loss closes
 
    // New feature: balance open no-TP positions across base by +X/-X floating.
-   if(EnableBalanceOpenAcrossBaseNoTP && BalanceOpenAcrossBaseNoTP_XUSD > 0)
+   if(EnableBalanceNoTPCloseTP && BalanceOpenAcrossBaseNoTP_XPips > 0)
+   {
+      BalanceNoTPCloseTP(BalanceOpenAcrossBaseNoTP_XPips);
+      return;
+   }
+   if(EnableBalanceOpenAcrossBaseNoTP && BalanceOpenAcrossBaseNoTP_XPips > 0)
    {
       // If this feature is enabled, we allow closing opposite-side losing positions
       // only when its condition is met.
-      BalanceOpenAcrossBaseNoTP(BalanceOpenAcrossBaseNoTP_XUSD);
+      BalanceOpenAcrossBaseNoTP(BalanceOpenAcrossBaseNoTP_XPips);
       return;
    }
    int nLevels = ArraySize(gridLevels);
