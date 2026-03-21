@@ -1,7 +1,9 @@
-# VP-Grid (MT5) — README
+# VP-Grid.mq5 — README (MT5)
 
-EA: `VP-Grid.mq5`  
-Phiên bản trong file: `2.12`
+- **File:** `VP-Grid.mq5`  
+- **Phiên bản:** `2.12` (theo `#property version` trong code)
+
+Tài liệu này **chỉ** mô tả EA **VP-Grid** trong file trên: tổng quan, input **nhóm 1–13**, giá trị mặc định trong source, và ví dụ cấu hình.
 
 ## Tổng quan
 `VP-Grid` là EA lưới “pending ảo” cho MT5:
@@ -41,7 +43,7 @@ Ví dụ: **AA level +1** chốt TP xong và `RearmDelayMinutesAA = 10` thì EA 
 ## Cài đặt & chạy
 
 ### Bước 1: Copy file
-- Chép `VP-Grid.mq5` vào:
+- Chép **`VP-Grid.mq5`** vào:
   - `MQL5/Experts/` (hoặc một thư mục con tùy bạn)
 
 ### Bước 2: Compile
@@ -54,6 +56,45 @@ Ví dụ: **AA level +1** chốt TP xong và `RearmDelayMinutesAA = 10` thì EA 
   - (Nếu dùng Telegram) Tools → Options → Expert Advisors → Allow WebRequest và thêm `https://api.telegram.org`
 
 ## Các tham số (Inputs)
+
+### 0) Bảng mặc định — `VP-Grid.mq5` (tóm tắt)
+Khi load EA lần đầu, các giá trị mặc định trong source (đồng bộ giao diện Inputs) như sau.
+
+**Nhóm 1–2 — GRID + ORDERS:**
+
+| Nhóm | Giá trị mặc định (tóm tắt) |
+|------|----------------------------|
+| **1. GRID** | `GridDistancePips = 1500`, `MaxGridLevels = 100` |
+| **2.1 Common** | `MagicNumber = 123456`, `CommentOrder = "VPGrid"` |
+| **2.2 AA** | Bật; lot 0.01; `LOT_GEOMETRIC`, mult 1.3; max 2; TP 0; balance bật |
+| **2.3 BB** | Bật; lot 0.01; geometric 1.3; max 2; TP 1500; balance bật |
+| **2.4 CC** | Tắt; lot 0.01; `LOT_FIXED`, mult 1.1; max 2; TP 1500; balance bật |
+| **2.5 DD** | Tắt; lot 0.01; `LOT_FIXED`, mult 1.3; max 0.01; TP 1000 (không balance) |
+
+**Nhóm 3–8.1** (trailing, scale, thông báo, lock profit, daily stop, giờ + ngày trong tuần):
+
+| Nhóm | Giá trị mặc định (tóm tắt) |
+|------|----------------------------|
+| **3. Trailing** | Bật; ngưỡng 50 USD; `TRAILING_MODE_RETURN`; drop 20%; Point A 1000 pip; bước 500 pip |
+| **4. Capital %** | Bật scale; base 50000 USD; nhân 50%; tăng tối đa 100% |
+| **5. Notifications** | Bật khi reset/stop; Telegram tắt; token/chat rỗng |
+| **6. Lock profit** | Bật; 25% |
+| **7. Daily stop** | Tắt; mục tiêu 500 USD/ngày |
+| **8. Trading hours** | Tắt; 08:00–16:00 server |
+| **8.1 Weekdays** | **Bật** lọc ngày; T2–T6 bật; T7/CN tắt |
+
+**Nhóm 9–13** (bộ lọc start/balance, re-arm, reset session, reset theo level, delay restart):
+
+| Nhóm | Giá trị mặc định (tóm tắt) |
+|------|----------------------------|
+| **9. ADX** | Tắt; M15; period 14; bắt đầu khi ADX dưới 20 |
+| **9.1 RSI cross** | Tắt; M15; period 14; cross 70 / 30 |
+| **9.2 Balance RSI** | Bật; M5; lookback **20** bar; trên 70 / dưới 30 |
+| **9.3 Across base** | Bật; X=20 USD; tối thiểu 3 bậc lưới khỏi base |
+| **10. Re-arm** | 20 phút (AA/BB/CC/DD) |
+| **11. Session reset** | Bật; mục tiêu 500 USD |
+| **12. Level match** | Bật; khoảng cách tối thiểu **4000** pip; session P/L ≥ 20 USD |
+| **13. Restart delay** | 0 phút |
 
 ### 1) GRID
 - **GridDistancePips**: khoảng cách giữa 2 mức lưới liên tiếp (đơn vị “pips” theo cách EA quy đổi).
@@ -160,7 +201,7 @@ Mặc định hiện tại: `EnableTradingHours = false`.
   - Khi xảy ra **RESET** tiếp theo (trailing lock / trailing SL hit / session reset / levels match…) thì EA sẽ **dừng** và chuyển sang WAITING.
   - EA sẽ **đợi đến ngày được chạy** rồi khởi động lại (đặt base tại giá lúc khởi động lại).
 
-Mặc định hiện tại: `EnableWeekdaySchedule = false`, `RunMonday..RunFriday = true`, `RunSaturday = false`, `RunSunday = false`.
+Mặc định hiện tại: `EnableWeekdaySchedule = true`, `RunMonday..RunFriday = true`, `RunSaturday = false`, `RunSunday = false`.
 
 ### 9) START FILTER (ADX)
 - **EnableADXStartFilter**: chỉ cho EA “khởi động” khi ADX < ngưỡng.
@@ -192,7 +233,7 @@ Mặc định hiện tại: `EnableRSIStartFilter = false`, `RSITimeframe = M15`
 - Nếu giá hiện tại **trên** đường gốc: chỉ cho phép đóng balance khi RSI nến đóng gần nhất **> RSIBalanceUpper** và trong `RSIBalanceLookbackBars` nến gần nhất có RSI vượt ngưỡng này.
 - Nếu giá hiện tại **dưới** đường gốc: chỉ cho phép đóng balance khi RSI nến đóng gần nhất **< RSIBalanceLower** và trong `RSIBalanceLookbackBars` nến gần nhất có RSI dưới ngưỡng này.
 
-Mặc định hiện tại: `EnableRSIBalanceFilter = true`, `RSIBalanceTimeframe = M5`, `RSIBalanceLookbackBars = 10`, `RSIBalanceUpper = 70`, `RSIBalanceLower = 30`.
+Mặc định hiện tại: `EnableRSIBalanceFilter = true`, `RSIBalanceTimeframe = M5`, `RSIBalanceLookbackBars = 20`, `RSIBalanceUpper = 70`, `RSIBalanceLower = 30`.
 
 ### 9.3) BALANCE ACROSS BASE (open, no TP)
 - **EnableBalanceOpenAcrossBaseNoTP**
@@ -264,7 +305,7 @@ Nếu thiếu một trong bốn điều kiện trên thì **không** reset.
 
 Khi đủ cả 4 điều kiện, EA thực hiện reset (đóng hết, base mới, daily/trading/ADX xử lý như các reset khác).
 
-Mặc định: `EnableResetWhenLevelsMatch = true`, `LevelMatchMinDistancePips = 5000`, `LevelMatchSessionTargetUSD = 20`.
+Mặc định: `EnableResetWhenLevelsMatch = true`, `LevelMatchMinDistancePips = 4000`, `LevelMatchSessionTargetUSD = 20`.
 
 ### 13) RESTART DELAY (after RESET)
 - **RestartDelayMinutesAfterReset**: sau mỗi lần EA **RESET** (đóng hết lệnh/pending), EA sẽ **chờ X phút** rồi mới khởi động lại (đặt base mới + khởi tạo lưới). `0 = off`.
@@ -274,6 +315,8 @@ Mặc định: `EnableResetWhenLevelsMatch = true`, `LevelMatchMinDistancePips =
 - Khi đến thời điểm restart, EA vẫn phải thỏa các điều kiện đang bật như **Trading hours**, **ADX start filter**, **RSI start filter**; nếu chưa thỏa thì EA tiếp tục WAITING theo đúng điều kiện đó.
 
 Mặc định hiện tại: `RestartDelayMinutesAfterReset = 0`.
+
+> **`VP-Grid.mq5` chỉ có input đến nhóm 13.** Không có engine phụ trong file gốc.
 
 ## Ví dụ cấu hình
 
@@ -363,5 +406,5 @@ EA đã được tối ưu để “bảo trì lưới” (quét level/duplicate
 
 ---
 
-Nếu bạn muốn, mình có thể cập nhật code để `GridDistancePips` hoạt động đúng trên mọi symbol (5/3/4/2 digits) theo cùng cách tính `pipSize` như phần trailing.
+Nếu cần, có thể chỉnh code để `GridDistancePips` quy đổi đúng trên mọi symbol (5/3/4/2 digits) bằng `pipSize` giống phần trailing.
 
