@@ -131,7 +131,7 @@ input int TradingEndMinute = 0;                // End minute (server time)
 //| 8.1 WEEKDAYS SCHEDULE                                              |
 //+------------------------------------------------------------------+
 input group "=== 8.1 WEEKDAYS (run days) ==="
-input bool EnableWeekdaySchedule = false;      // Run EA only on selected weekdays; if a non-run day starts while running, EA stops on next RESET
+input bool EnableWeekdaySchedule = true;       // Run EA only on selected weekdays; if a non-run day starts while running, EA stops on next RESET
 input bool RunMonday = true;
 input bool RunTuesday = true;
 input bool RunWednesday = true;
@@ -165,7 +165,7 @@ input double RSILowerCross = 30.0;             // Start when RSI crosses DOWN th
 input group "=== 9.2 BALANCE FILTER (RSI) ==="
 input bool EnableRSIBalanceFilter = true;     // Allow balance closes only when RSI condition is met
 input ENUM_TIMEFRAMES RSIBalanceTimeframe = PERIOD_M5; // RSI timeframe for balance filter
-input int RSIBalanceLookbackBars = 10;         // Lookback bars for RSI extreme check (closed bars)
+input int RSIBalanceLookbackBars = 20;         // Lookback bars for RSI extreme check (closed bars)
 input double RSIBalanceUpper = 70.0;           // Price above base: require RSI > this level
 input double RSIBalanceLower = 30.0;           // Price below base: require RSI < this level
 
@@ -198,7 +198,7 @@ input double SessionProfitTargetUSD = 500.0;    // Session target (USD)
 //+------------------------------------------------------------------+
 input group "=== 12. RESET WHEN LEVELS MATCH ==="
 input bool EnableResetWhenLevelsMatch = true;   // Reset EA when all 4 conditions below are met
-input double LevelMatchMinDistancePips = 5000.0; // X pips: require at least one open order above base and one below base, each at distance >= X pips
+input double LevelMatchMinDistancePips = 4000.0; // X pips: require at least one open order above base and one below base, each at distance >= X pips
 input double LevelMatchSessionTargetUSD = 20.0; // (3) Session P/L (closed + open) >= this USD. (4) Trailing total profit mode not active
 
 //+------------------------------------------------------------------+
