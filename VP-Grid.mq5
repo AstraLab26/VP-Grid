@@ -174,7 +174,8 @@ input double RSIBalanceLower = 30.0;           // Price below base: require RSI 
 //+------------------------------------------------------------------+
 input group "=== 9.3 BALANCE ACROSS BASE (open, no TP) ==="
 input bool EnableBalanceOpenAcrossBaseNoTP = true; // Enable mode: use profitable NO-TP positions to offset losing NO-TP positions across the base line
-input double BalanceOpenAcrossBaseNoTP_XUSD = 20.0;  // Activation threshold (USD): run when sum(positive $ on same side) + sum(|negative $| opposite) >= X
+input double BalanceOpenAcrossBaseNoTP_XUSD = 20.0;  // Activation (USD): net P/L (sum of selected no-TP profits + opposite loser float) >= X
+input int BalanceOpenAcrossBaseNoTP_MaxPositiveOrders = 2; // Max profitable no-TP positions to combine when closing one opposite loss (1–15; search uses farthest 12 only)
 input double BalanceClosePairMinSurplusUSD = 20.0; // Per-close safety buffer (USD): net after pair close must leave at least X USD (approx. posPr + negPortion >= X)
 input int BalanceOpenAcrossBaseNoTP_MinDistanceLevels = 3; // Current price must be at least this many grid levels away from the base before balancing is allowed
 input bool EnableBalanceNoTPCloseTP = true; // Enable mode: use profitable NO-TP positions to offset losing TP positions on the opposite side (only if no opposite-side NO-TP loser exists)
@@ -551,6 +552,98 @@ bool IsRSIBalanceAllowed(bool priceAboveBase)
    }
 }
 
+// 9.3: lexicographic next k-combination of indices in [0..n-1]; idx sorted ascending.
+bool Balance93_AdvanceCombination(int &idx[], int k, int n)
+{
+   for(int p = k - 1; p >= 0; p--)
+   {
+      if(idx[p] < n - k + p)
+      {
+         idx[p]++;
+         for(int q = p + 1; q < k; q++)
+            idx[q] = idx[q - 1] + 1;
+         return true;
+      }
+   }
+   return false;
+}
+
+// 9.3: combined no-TP profit USD vs one negative leg — net X, surplus, balance floor, min lot; sets portion & volume to close.
+bool Balance93_TryNegCloseParams(
+   double xUSD,
+   double combinedPosPr,
+   double negPr,
+   double negVol,
+   double minSurplusUsd,
+   double balanceFloor,
+   double balanceNow,
+   double &outDesiredPortion,
+   double &outVolClose)
+{
+   if(negPr >= 0.0)
+      return false;
+   double absLoss = -negPr;
+   if(absLoss <= 0.0)
+      return false;
+
+   if(combinedPosPr + negPr < xUSD)
+      return false;
+
+   if(combinedPosPr <= minSurplusUsd)
+      return false;
+
+   double desiredPortion = combinedPosPr / absLoss;
+   if(desiredPortion > 1.0) desiredPortion = 1.0;
+   if(desiredPortion < 0.0) desiredPortion = 0.0;
+   double ratioAllowedByUsdSurplus = (combinedPosPr - minSurplusUsd) / absLoss;
+   if(ratioAllowedByUsdSurplus < 0.0) ratioAllowedByUsdSurplus = 0.0;
+   if(ratioAllowedByUsdSurplus > 1.0) ratioAllowedByUsdSurplus = 1.0;
+   desiredPortion = MathMin(desiredPortion, ratioAllowedByUsdSurplus);
+
+   double ratioAllowedByFloor = 1.0;
+   double balanceAfterPos = balanceNow + combinedPosPr;
+   double balanceAfterFullLoss = balanceAfterPos + negPr;
+   if(balanceAfterFullLoss < balanceFloor)
+   {
+      ratioAllowedByFloor = (balanceFloor - balanceAfterPos) / negPr;
+      if(ratioAllowedByFloor < 0.0) ratioAllowedByFloor = 0.0;
+      if(ratioAllowedByFloor > 1.0) ratioAllowedByFloor = 1.0;
+   }
+   desiredPortion = MathMin(desiredPortion, ratioAllowedByFloor);
+   if(desiredPortion <= 0.0)
+      return false;
+
+   double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double volClose = negVol * desiredPortion;
+   volClose = MathFloor(volClose / lotStep) * lotStep;
+   if(volClose < minLot)
+   {
+      double maxVolByPortion = negVol * desiredPortion;
+      double fallbackVol = 0.0;
+      if(0.02 >= minLot)
+      {
+         double v02 = MathCeil(0.02 / lotStep) * lotStep;
+         if(v02 <= maxVolByPortion && v02 <= negVol)
+            fallbackVol = v02;
+      }
+      if(fallbackVol <= 0.0 && 0.01 >= minLot)
+      {
+         double v01 = MathCeil(0.01 / lotStep) * lotStep;
+         if(v01 <= maxVolByPortion && v01 <= negVol)
+            fallbackVol = v01;
+      }
+      if(fallbackVol <= 0.0)
+         return false;
+      volClose = fallbackVol;
+      desiredPortion = volClose / negVol;
+   }
+
+   outDesiredPortion = desiredPortion;
+   outVolClose = volClose;
+   return true;
+}
+
 // Balance: close opposite-side losing positions (no TP) when same-side no-TP profit + opposite-side loss (USD) >= X.
 // Per close: negative leg first (partial/full), then full positive leg; min net surplus USD reserved.
 bool BalanceOpenAcrossBaseNoTP(double xUSD)
@@ -573,12 +666,9 @@ bool BalanceOpenAcrossBaseNoTP(double xUSD)
       return false;
 
    // Balance open positions (no TP) across base:
-   // If sumPos (profit on same side, no-TP) + sumNegAbs (abs(loss) on opposite side, no-TP) >= X,
-   // then close 2 orders: one profitable (positive) on the same side and one losing (negative) on the opposite side.
+   // Activation: sum(selected no-TP profits)+negPr >= X; try group sizes 1..MaxPositiveOrders (farthest-first combos).
    //
    // Only for our balanced magics (AA/BB/CC). DD is not included.
-   double sumPosUsd = 0.0;
-   double sumNegAbsUsd = 0.0;
 
    // Candidate arrays
    ulong posTickets[];
@@ -633,7 +723,6 @@ bool BalanceOpenAcrossBaseNoTP(double xUSD)
       double pr = GetPositionPnL(ticket); // profit+swap (USD account terms)
       if(isSameSide && pr > 0.0)
       {
-         sumPosUsd += pr;
          int n = ArraySize(posTickets);
          ArrayResize(posTickets, n + 1);
          ArrayResize(posPls, n + 1);
@@ -648,7 +737,6 @@ bool BalanceOpenAcrossBaseNoTP(double xUSD)
       }
       else if(isOppSide && pr < 0.0)
       {
-         sumNegAbsUsd += (-pr);
          int n = ArraySize(negTickets);
          ArrayResize(negTickets, n + 1);
          ArrayResize(negPls, n + 1);
@@ -662,9 +750,6 @@ bool BalanceOpenAcrossBaseNoTP(double xUSD)
          negTypes[n] = typ;
       }
    }
-
-   if((sumPosUsd + sumNegAbsUsd) < xUSD)
-      return false;
 
    if(ArraySize(posTickets) <= 0 || ArraySize(negTickets) <= 0)
       return false;
@@ -709,77 +794,73 @@ bool BalanceOpenAcrossBaseNoTP(double xUSD)
          }
       }
 
-   // Close exactly 2 orders: top positive + top negative
-   ulong posTicket = posTickets[0];
+   // Top negative (farthest); search 1..maxK no-TP profits (combinations, smallest k first, lexicographic on sorted list).
    ulong negTicket = negTickets[0];
-   int posType = posTypes[0];
    int negType = negTypes[0];
-   double posPr = posPls[0];
    double negPr = negPls[0]; // negative
    double negVol = negVols[0];
-   double minSurplusUsd = MathMax(0.0, BalanceClosePairMinSurplusUSD);
-   if(posPr <= minSurplusUsd)
-      return false;
-
-   double balanceFloor = sessionStartBalance + lockedProfitReserve;
-   double balanceNow = AccountInfoDouble(ACCOUNT_BALANCE);
-   bool anyClosed = false;
    if(negPr >= 0.0)
       return false;
-   double absLoss = -negPr;
-   if(absLoss <= 0.0)
-      return false;
 
-   // Pre-calculate whether the negative leg can be closed (full/partial)
-   // before closing the positive leg.
-   double desiredPortion = posPr / absLoss;   // 0..1
-   if(desiredPortion > 1.0) desiredPortion = 1.0;
-   if(desiredPortion < 0.0) desiredPortion = 0.0;
-   double ratioAllowedByUsdSurplus = (posPr - minSurplusUsd) / absLoss;
-   if(ratioAllowedByUsdSurplus < 0.0) ratioAllowedByUsdSurplus = 0.0;
-   if(ratioAllowedByUsdSurplus > 1.0) ratioAllowedByUsdSurplus = 1.0;
-   desiredPortion = MathMin(desiredPortion, ratioAllowedByUsdSurplus);
+   double minSurplusUsd = MathMax(0.0, BalanceClosePairMinSurplusUSD);
+   double balanceFloor = sessionStartBalance + lockedProfitReserve;
+   double balanceNow = AccountInfoDouble(ACCOUNT_BALANCE);
 
-   double ratioAllowedByFloor = 1.0;
-   double balanceAfterPos = balanceNow + posPr;
-   double balanceAfterFullLoss = balanceAfterPos + negPr; // negPr < 0
-   if(balanceAfterFullLoss < balanceFloor)
+   int maxK = BalanceOpenAcrossBaseNoTP_MaxPositiveOrders;
+   if(maxK < 1) maxK = 1;
+   if(maxK > 15) maxK = 15;
+   int poolN = pcnt;
+   if(poolN > 12)
+      poolN = 12;
+
+   double desiredPortion = 0.0;
+   double volClose = 0.0;
+   int selIdx[];
+   ArrayResize(selIdx, 0);
+   int selCount = 0;
+   bool found = false;
+
+   for(int k = 1; k <= maxK && k <= poolN && !found; k++)
    {
-      ratioAllowedByFloor = (balanceFloor - balanceAfterPos) / negPr; // negPr < 0
-      if(ratioAllowedByFloor < 0.0) ratioAllowedByFloor = 0.0;
-      if(ratioAllowedByFloor > 1.0) ratioAllowedByFloor = 1.0;
+      int idx[];
+      ArrayResize(idx, k);
+      for(int z = 0; z < k; z++)
+         idx[z] = z;
+
+      while(true)
+      {
+         double sumPr = 0.0;
+         for(int z = 0; z < k; z++)
+            sumPr += posPls[idx[z]];
+         if(Balance93_TryNegCloseParams(xUSD, sumPr, negPr, negVol, minSurplusUsd, balanceFloor, balanceNow, desiredPortion, volClose))
+         {
+            ArrayResize(selIdx, k);
+            for(int z = 0; z < k; z++)
+               selIdx[z] = idx[z];
+            selCount = k;
+            found = true;
+            break;
+         }
+         if(!Balance93_AdvanceCombination(idx, k, poolN))
+            break;
+      }
    }
-   desiredPortion = MathMin(desiredPortion, ratioAllowedByFloor);
-   if(desiredPortion <= 0.0)
+   if(!found || selCount <= 0)
       return false;
 
+   for(int a = 0; a < selCount - 1; a++)
+      for(int b = a + 1; b < selCount; b++)
+         if(selIdx[b] < selIdx[a])
+         {
+            int t = selIdx[a];
+            selIdx[a] = selIdx[b];
+            selIdx[b] = t;
+         }
+
+   bool anyClosed = false;
    double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
-   double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
-   double volClose = negVol * desiredPortion;
-   volClose = MathFloor(volClose / lotStep) * lotStep;
-   if(volClose < minLot)
-   {
-      double maxVolByPortion = negVol * desiredPortion;
-      double fallbackVol = 0.0;
-      if(0.02 >= minLot)
-      {
-         double v02 = MathCeil(0.02 / lotStep) * lotStep;
-         if(v02 <= maxVolByPortion && v02 <= negVol)
-            fallbackVol = v02;
-      }
-      if(fallbackVol <= 0.0 && 0.01 >= minLot)
-      {
-         double v01 = MathCeil(0.01 / lotStep) * lotStep;
-         if(v01 <= maxVolByPortion && v01 <= negVol)
-            fallbackVol = v01;
-      }
-      if(fallbackVol <= 0.0)
-         return false; // wait until enough to close negative side too
-      volClose = fallbackVol;
-      desiredPortion = volClose / negVol;
-   }
 
-   // Close negative first (full/partial), then positive full — both must succeed for a balanced pair.
+   // Close negative first (full/partial), then each selected profit leg (full), farthest-first order.
    bool negOk = false;
    double negRealized = 0.0;
    if(desiredPortion >= 0.999 || volClose >= (negVol - lotStep * 0.5))
@@ -806,24 +887,32 @@ bool BalanceOpenAcrossBaseNoTP(double xUSD)
    else if(negType == 1) lastBalanceBBCloseTime = TimeCurrent();
    else if(negType == 2) lastBalanceCCCloseTime = TimeCurrent();
 
-   if(!PositionCloseWithComment(posTicket, "Balance open (no TP) profit order"))
+   for(int zi = 0; zi < selCount; zi++)
    {
-      Print("VP-Grid balance noTP/noTP: negative closed but positive close failed ticket=", posTicket, " err=", GetLastError());
-      return false;
+      int si = selIdx[zi];
+      string profitCmt = "Balance open (no TP) profit order";
+      if(zi > 0)
+         profitCmt = profitCmt + " " + IntegerToString(zi + 1);
+      if(!PositionCloseWithComment(posTickets[si], profitCmt))
+      {
+         Print("VP-Grid balance noTP/noTP: negative closed but profit close failed ticket=", posTickets[si], " err=", GetLastError());
+         return false;
+      }
+      sessionClosedProfitRemaining += posPls[si];
+      anyClosed = true;
+      int pt = posTypes[si];
+      if(pt == 0) lastBalanceAAByBBCloseTime = TimeCurrent();
+      else if(pt == 1) lastBalanceBBCloseTime = TimeCurrent();
+      else if(pt == 2) lastBalanceCCCloseTime = TimeCurrent();
    }
-   sessionClosedProfitRemaining += posPr;
-   anyClosed = true;
-   if(posType == 0) lastBalanceAAByBBCloseTime = TimeCurrent();
-   else if(posType == 1) lastBalanceBBCloseTime = TimeCurrent();
-   else if(posType == 2) lastBalanceCCCloseTime = TimeCurrent();
 
    return anyClosed;
 }
 
 // Balance variant:
-// - Source: no TP, profitable (USD P/L), same side as price vs base.
+// - Source: no TP, profitable (USD P/L), same side as price vs base; up to MaxPositiveOrders combined.
 // - Target: has TP, losing, opposite side. Guard: no losing no-TP on opposite side.
-// - Trigger: sum(source $) + sum(|target $|) >= X USD.
+// - Trigger: sum(selected sources)+tgtPr >= X; tgtPr negative float.
 bool BalanceNoTPCloseTP(double xUSD)
 {
    if(!EnableBalanceNoTPCloseTP)
@@ -869,9 +958,6 @@ bool BalanceNoTPCloseTP(double xUSD)
    ArrayResize(tgtTypes, 0);
    ArrayResize(tgtAboveBase, 0);
 
-   double sumSrcUsd = 0.0;
-   double sumTgtNegAbsUsd = 0.0;
-
    bool hasNegativeNoTPOppSide = false;
 
    for(int i = 0; i < PositionsTotal(); i++)
@@ -909,7 +995,6 @@ bool BalanceNoTPCloseTP(double xUSD)
 
       if(tp <= 0.0 && sameSideAsPrice && pr > 0.0)
       {
-         sumSrcUsd += pr;
          int n = ArraySize(srcTickets);
          ArrayResize(srcTickets, n + 1);
          ArrayResize(srcPls, n + 1);
@@ -926,7 +1011,6 @@ bool BalanceNoTPCloseTP(double xUSD)
       }
       else if(tp > 0.0 && oppSideAsPrice && pr < 0.0)
       {
-         sumTgtNegAbsUsd += (-pr);
          int n = ArraySize(tgtTickets);
          ArrayResize(tgtTickets, n + 1);
          ArrayResize(tgtPls, n + 1);
@@ -944,8 +1028,6 @@ bool BalanceNoTPCloseTP(double xUSD)
    }
 
    if(hasNegativeNoTPOppSide)
-      return false;
-   if((sumSrcUsd + sumTgtNegAbsUsd) < xUSD)
       return false;
    if(ArraySize(srcTickets) <= 0 || ArraySize(tgtTickets) <= 0)
       return false;
@@ -990,94 +1072,85 @@ bool BalanceNoTPCloseTP(double xUSD)
          }
       }
 
-   // Pick first pair that is truly across base: one above, one below.
-   int srcIdx = -1;
+   // First target across base from farthest no-TP source (index 0 after sort).
    int tgtIdx = -1;
-   for(int si = 0; si < ArraySize(srcTickets) && srcIdx < 0; si++)
+   for(int ti = 0; ti < ArraySize(tgtTickets); ti++)
    {
-      for(int ti = 0; ti < ArraySize(tgtTickets); ti++)
+      if(srcAboveBase[0] != tgtAboveBase[ti])
       {
-         if(srcAboveBase[si] != tgtAboveBase[ti])
-         {
-            srcIdx = si;
-            tgtIdx = ti;
-            break;
-         }
+         tgtIdx = ti;
+         break;
       }
    }
-   if(srcIdx < 0 || tgtIdx < 0)
+   if(tgtIdx < 0)
       return false;
 
-   ulong srcTicket = srcTickets[srcIdx];
    ulong tgtTicket = tgtTickets[tgtIdx];
-   int srcType = srcTypes[srcIdx];
    int tgtType = tgtTypes[tgtIdx];
-   double srcPr = srcPls[srcIdx];
    double tgtPr = tgtPls[tgtIdx]; // negative
    double tgtVol = tgtVols[tgtIdx];
-   double minSurplusUsd = MathMax(0.0, BalanceClosePairMinSurplusUSD);
-   if(srcPr <= minSurplusUsd)
-      return false;
-
-   double balanceFloor = sessionStartBalance + lockedProfitReserve;
-   double balanceNow = AccountInfoDouble(ACCOUNT_BALANCE);
-   bool anyClosed = false;
    if(tgtPr >= 0.0)
       return false;
-   double absLoss = -tgtPr;
-   if(absLoss <= 0.0)
-      return false;
 
-   // Pre-calculate whether target losing TP leg can be closed (full/partial)
-   // before closing the profitable source leg.
-   double desiredPortion = srcPr / absLoss;
-   if(desiredPortion > 1.0) desiredPortion = 1.0;
-   if(desiredPortion < 0.0) desiredPortion = 0.0;
-   double ratioAllowedByUsdSurplus = (srcPr - minSurplusUsd) / absLoss;
-   if(ratioAllowedByUsdSurplus < 0.0) ratioAllowedByUsdSurplus = 0.0;
-   if(ratioAllowedByUsdSurplus > 1.0) ratioAllowedByUsdSurplus = 1.0;
-   desiredPortion = MathMin(desiredPortion, ratioAllowedByUsdSurplus);
+   double minSurplusUsd = MathMax(0.0, BalanceClosePairMinSurplusUSD);
+   double balanceFloor = sessionStartBalance + lockedProfitReserve;
+   double balanceNow = AccountInfoDouble(ACCOUNT_BALANCE);
 
-   double ratioAllowedByFloor = 1.0;
-   double balanceAfterSrc = balanceNow + srcPr;
-   double balanceAfterFullLoss = balanceAfterSrc + tgtPr;
-   if(balanceAfterFullLoss < balanceFloor)
+   int maxK = BalanceOpenAcrossBaseNoTP_MaxPositiveOrders;
+   if(maxK < 1) maxK = 1;
+   if(maxK > 15) maxK = 15;
+   int poolN = scnt;
+   if(poolN > 12)
+      poolN = 12;
+
+   double desiredPortion = 0.0;
+   double volClose = 0.0;
+   int selIdx[];
+   ArrayResize(selIdx, 0);
+   int selCount = 0;
+   bool found = false;
+
+   for(int k = 1; k <= maxK && k <= poolN && !found; k++)
    {
-      ratioAllowedByFloor = (balanceFloor - balanceAfterSrc) / tgtPr; // tgtPr < 0
-      if(ratioAllowedByFloor < 0.0) ratioAllowedByFloor = 0.0;
-      if(ratioAllowedByFloor > 1.0) ratioAllowedByFloor = 1.0;
+      int idx[];
+      ArrayResize(idx, k);
+      for(int z = 0; z < k; z++)
+         idx[z] = z;
+
+      while(true)
+      {
+         double sumPr = 0.0;
+         for(int z = 0; z < k; z++)
+            sumPr += srcPls[idx[z]];
+         if(Balance93_TryNegCloseParams(xUSD, sumPr, tgtPr, tgtVol, minSurplusUsd, balanceFloor, balanceNow, desiredPortion, volClose))
+         {
+            ArrayResize(selIdx, k);
+            for(int z = 0; z < k; z++)
+               selIdx[z] = idx[z];
+            selCount = k;
+            found = true;
+            break;
+         }
+         if(!Balance93_AdvanceCombination(idx, k, poolN))
+            break;
+      }
    }
-   desiredPortion = MathMin(desiredPortion, ratioAllowedByFloor);
-   if(desiredPortion <= 0.0)
+   if(!found || selCount <= 0)
       return false;
 
+   for(int a = 0; a < selCount - 1; a++)
+      for(int b = a + 1; b < selCount; b++)
+         if(selIdx[b] < selIdx[a])
+         {
+            int t = selIdx[a];
+            selIdx[a] = selIdx[b];
+            selIdx[b] = t;
+         }
+
+   bool anyClosed = false;
    double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
-   double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
-   double volClose = tgtVol * desiredPortion;
-   volClose = MathFloor(volClose / lotStep) * lotStep;
-   if(volClose < minLot)
-   {
-      double maxVolByPortion = tgtVol * desiredPortion;
-      double fallbackVol = 0.0;
-      if(0.02 >= minLot)
-      {
-         double v02 = MathCeil(0.02 / lotStep) * lotStep;
-         if(v02 <= maxVolByPortion && v02 <= tgtVol)
-            fallbackVol = v02;
-      }
-      if(fallbackVol <= 0.0 && 0.01 >= minLot)
-      {
-         double v01 = MathCeil(0.01 / lotStep) * lotStep;
-         if(v01 <= maxVolByPortion && v01 <= tgtVol)
-            fallbackVol = v01;
-      }
-      if(fallbackVol <= 0.0)
-         return false; // wait until enough to close negative side too
-      volClose = fallbackVol;
-      desiredPortion = volClose / tgtVol;
-   }
 
-   // Close losing TP leg first (full/partial), then profitable no-TP leg fully — both must succeed.
+   // Close losing TP leg first (full/partial), then each selected no-TP source (full).
    bool tgtOk = false;
    double tgtRealized = 0.0;
    if(desiredPortion >= 0.999 || volClose >= (tgtVol - lotStep * 0.5))
@@ -1104,16 +1177,24 @@ bool BalanceNoTPCloseTP(double xUSD)
    else if(tgtType == 1) lastBalanceBBCloseTime = TimeCurrent();
    else if(tgtType == 2) lastBalanceCCCloseTime = TimeCurrent();
 
-   if(!PositionCloseWithComment(srcTicket, "Balance noTP->TP source"))
+   for(int zi = 0; zi < selCount; zi++)
    {
-      Print("VP-Grid balance noTP->TP: target closed but source close failed ticket=", srcTicket, " err=", GetLastError());
-      return false;
+      int si = selIdx[zi];
+      string srcCmt = "Balance noTP->TP source";
+      if(zi > 0)
+         srcCmt = srcCmt + " " + IntegerToString(zi + 1);
+      if(!PositionCloseWithComment(srcTickets[si], srcCmt))
+      {
+         Print("VP-Grid balance noTP->TP: target closed but source close failed ticket=", srcTickets[si], " err=", GetLastError());
+         return false;
+      }
+      sessionClosedProfitRemaining += srcPls[si];
+      anyClosed = true;
+      int st = srcTypes[si];
+      if(st == 0) lastBalanceAAByBBCloseTime = TimeCurrent();
+      else if(st == 1) lastBalanceBBCloseTime = TimeCurrent();
+      else if(st == 2) lastBalanceCCCloseTime = TimeCurrent();
    }
-   sessionClosedProfitRemaining += srcPr;
-   anyClosed = true;
-   if(srcType == 0) lastBalanceAAByBBCloseTime = TimeCurrent();
-   else if(srcType == 1) lastBalanceBBCloseTime = TimeCurrent();
-   else if(srcType == 2) lastBalanceCCCloseTime = TimeCurrent();
 
    return anyClosed;
 }
