@@ -5,7 +5,7 @@
 // Allow wrapper versions (e.g., V3) to reuse this file while overriding #property fields.
 #ifndef VPGRID_SKIP_PROPERTIES
 #property copyright "VP-Grid"
-#property version   "2.12"
+#property version   "2.14"
 #property description "VP-Grid: virtual pendings (AA/BB/CC Buy+Sell; DD Sell+Buy), capital scaling, trailing, session reset"
 #endif
 // Telegram: Add https://api.telegram.org to Tools -> Options -> Expert Advisors -> Allow WebRequest for listed URL
@@ -163,7 +163,7 @@ input double RSILowerCross = 30.0;             // Start when RSI crosses DOWN th
 //| 9.2 BALANCE FILTER (RSI)                                          |
 //+------------------------------------------------------------------+
 input group "=== 9.2 BALANCE FILTER (RSI) ==="
-input bool EnableRSIBalanceFilter = true;     // Allow balance closes only when RSI condition is met
+input bool EnableRSIBalanceFilter = false;    // Allow balance closes only when RSI condition is met
 input ENUM_TIMEFRAMES RSIBalanceTimeframe = PERIOD_M5; // RSI timeframe for balance filter
 input int RSIBalanceLookbackBars = 20;         // Lookback bars for RSI extreme check (closed bars)
 input double RSIBalanceUpper = 70.0;           // Price above base: require RSI > this level
@@ -175,7 +175,7 @@ input double RSIBalanceLower = 30.0;           // Price below base: require RSI 
 input group "=== 9.3 BALANCE ACROSS BASE (open, no TP) ==="
 input bool EnableBalanceOpenAcrossBaseNoTP = true; // Enable mode: use profitable NO-TP positions to offset losing NO-TP positions across the base line
 input double BalanceOpenAcrossBaseNoTP_XUSD = 20.0;  // Activation (USD): net P/L (sum of selected no-TP profits + opposite loser float) >= X
-input int BalanceOpenAcrossBaseNoTP_MaxPositiveOrders = 20; // Max positives to combine: tries 1, then 2… up to this (1–20; pool search uses farthest 20 only)
+input int BalanceOpenAcrossBaseNoTP_MaxPositiveOrders = 15; // Max positives to combine: tries 1, then 2… up to this (1–20; pool search uses farthest 20 only)
 input double BalanceClosePairMinSurplusUSD = 20.0; // Per-close safety buffer (USD): net after pair close must leave at least X USD (approx. posPr + negPortion >= X)
 input int BalanceOpenAcrossBaseNoTP_MinDistanceLevels = 3; // 9.3: BID must be >= this many grid steps from base: |BID-base| >= N×gridStep (N≥1)
 input bool EnableBalanceNoTPCloseTP = true; // Enable mode: use profitable NO-TP positions to offset losing TP positions on the opposite side (only if no opposite-side NO-TP loser exists)
@@ -193,22 +193,34 @@ input int RearmDelayMinutesDD = 20;            // DD: minutes to wait before re-
 //| 11. SESSION RESET (profit target)                                  |
 //+------------------------------------------------------------------+
 input group "=== 11. SESSION RESET (profit target) ==="
-input bool EnableSessionProfitReset = true;    // Reset EA when (session open + session closed) profit reaches the target; disabled during gongLaiMode
-input double SessionProfitTargetUSD = 500.0;    // Session target (USD)
+input bool     EnableSessionProfitReset   = true;   // On
+input double   SessionProfitTargetUSD     = 500.0;  // Target (USD)
 
 //+------------------------------------------------------------------+
-//| 12. RESET WHEN LEVELS MATCH (price above base)                     |
+//| 12. RESET WHEN LEVELS MATCH                                        |
+//|  (1) On (2) >=1 open above base & >=1 below, each >= X pips      |
+//|  (3) Session P/L >= USD after lock (4) not in gongLai           |
 //+------------------------------------------------------------------+
 input group "=== 12. RESET WHEN LEVELS MATCH ==="
-input bool EnableResetWhenLevelsMatch = true;   // Reset EA when all 4 conditions below are met
-input double LevelMatchMinDistancePips = 4000.0; // X pips: require at least one open order above base and one below base, each at distance >= X pips
-input double LevelMatchSessionTargetUSD = 20.0; // (3) Session P/L (closed + open) >= this USD. (4) Trailing total profit mode not active
+input bool     EnableResetWhenLevelsMatch      = true;    // On
+input double   LevelMatchMinDistancePips       = 4000.0;  // Min pips (each side vs base)
+input double   LevelMatchSessionTargetUSD      = 20.0;    // Min session P/L (USD)
 
 //+------------------------------------------------------------------+
 //| 13. RESTART DELAY (after RESET)                                   |
 //+------------------------------------------------------------------+
 input group "=== 13. RESTART DELAY (after RESET) ==="
-input int RestartDelayMinutesAfterReset = 0;   // After any EA RESET, wait X minutes before restarting (0=off)
+input int RestartDelayMinutesAfterReset = 0;   // Minutes wait after RESET (0=off)
+
+//+------------------------------------------------------------------+
+//| 14. RESET — symmetric vs base (mirror)                             |
+//|  Bậc lưới (1..N) từ base; cùng/đối phía theo BID; xa nhất ≥ X bậc |
+//+------------------------------------------------------------------+
+input group "=== 14. RESET — symmetric vs base ==="
+input bool     EnableResetSymmetricMirror           = true;    // On
+input int      SymmetricResetSameSideMinLevels      = 12;      // Min grid levels: farthest open vs BASE, same side as BID (1..MaxGridLevels)
+input int      SymmetricResetOppositeSideMinLevels  = 4;       // Min grid levels: farthest open vs BASE, opposite side from BID
+input double   SymmetricResetMaxLossUSD             = 500.0;   // Max loss (USD): P/L must be >= -value (e.g. 500 => ok down to -500)
 
 //--- Global variables
 CTrade trade;
@@ -419,6 +431,55 @@ string BuildOrderCommentWithLevel(long magic, int levelNum)
 {
    // Example: "VP-Grid|AA|L+1"
    return "VP-Grid|" + StrategyTagFromMagic(magic) + "|L" + (levelNum > 0 ? "+" : "") + IntegerToString(levelNum);
+}
+
+// Group 14: chỉ lệnh đang mở. Bậc lưới = làm tròn |open−base|/gridStep (1..MaxGridLevels); lệnh xa nhất mỗi phía phải ≥ X bậc.
+bool SymmetricMirrorResetGridLevelsOk(double bid, int sameMinLevels, int oppMinLevels)
+{
+   if(gridStep <= 0.0) return false;
+   double tolBid = pnt * 2.0;
+   if(bid >= basePrice - tolBid && bid <= basePrice + tolBid) return false;
+   int needSame = sameMinLevels;
+   int needOpp = oppMinLevels;
+   if(needSame < 1 || needOpp < 1) return false;
+   if(needSame > MaxGridLevels) needSame = MaxGridLevels;
+   if(needOpp > MaxGridLevels) needOpp = MaxGridLevels;
+
+   double tolLv = gridStep * 0.5;
+
+   int maxLvlAbove = 0;
+   bool hasAbove = false;
+   int maxLvlBelow = 0;
+   bool hasBelow = false;
+
+   for(int i = 0; i < PositionsTotal(); i++)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket <= 0) continue;
+      if(!IsOurMagic(PositionGetInteger(POSITION_MAGIC)) || PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+      if(sessionStartTime > 0 && (datetime)PositionGetInteger(POSITION_TIME) < sessionStartTime) continue;
+      double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+      if(openPrice > basePrice + tolLv)
+      {
+         int lv = (int)MathRound((openPrice - basePrice) / gridStep);
+         if(lv < 1) lv = 1;
+         if(lv > MaxGridLevels) lv = MaxGridLevels;
+         if(!hasAbove || lv > maxLvlAbove) { maxLvlAbove = lv; hasAbove = true; }
+      }
+      else if(openPrice < basePrice - tolLv)
+      {
+         int lv = (int)MathRound((basePrice - openPrice) / gridStep);
+         if(lv < 1) lv = 1;
+         if(lv > MaxGridLevels) lv = MaxGridLevels;
+         if(!hasBelow || lv > maxLvlBelow) { maxLvlBelow = lv; hasBelow = true; }
+      }
+   }
+   if(!hasAbove || !hasBelow) return false;
+
+   bool bidAbove = (bid > basePrice);
+   if(bidAbove)
+      return (maxLvlAbove >= needSame && maxLvlBelow >= needOpp);
+   return (maxLvlBelow >= needSame && maxLvlAbove >= needOpp);
 }
 
 // Trading window check (server time). Assumes start < end within the same day.
@@ -2172,6 +2233,77 @@ void OnTick()
                ManageGridOrders();
             return;
          }
+      }
+   }
+
+   // Reset when: lệnh xa nhất vs base (cùng phía BID & đối phía) đạt tối thiểu pip; + P/L phiên.
+   if(!gongLaiMode && EnableResetSymmetricMirror && SymmetricResetSameSideMinLevels > 0 && SymmetricResetOppositeSideMinLevels > 0 && SymmetricResetMaxLossUSD > 0.0)
+   {
+      double bidSym = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      double totalSessionSym = (AccountInfoDouble(ACCOUNT_BALANCE) - sessionStartBalance) + floating;
+      double effectiveSessionSym = totalSessionSym - ((EnableLockProfit && LockProfitPct > 0) ? sessionLockedProfit : 0.0);
+      // e.g. MaxLoss=20 => need P/L >= -20 (so -19 satisfies; -21 does not)
+      bool symTargetMet = (effectiveSessionSym >= -SymmetricResetMaxLossUSD);
+      if(symTargetMet && gridStep > 0.0 && SymmetricMirrorResetGridLevelsOk(bidSym, SymmetricResetSameSideMinLevels, SymmetricResetOppositeSideMinLevels))
+      {
+         CloseAllPositionsAndOrders();
+         UpdateSessionMultiplierFromAccountGrowth();
+         DailyStopOnResetAccumulateAndMaybeStop("Symmetric mirror vs base + max loss ok");
+         TradingHoursStopOnResetIfNeeded("Symmetric mirror vs base + max loss ok");
+         WeekdayStopOnResetIfNeeded("Symmetric mirror vs base + max loss ok");
+         lastResetTime = TimeCurrent();
+         sessionClosedProfit = 0.0;
+         sessionLockedProfit = 0.0;
+         sessionClosedProfitBB = 0.0;
+         sessionClosedProfitCC = 0.0;
+         sessionClosedProfitDD = 0.0;
+         lastBalanceBBCloseTime = 0;
+         lastBalanceCCCloseTime = 0;
+         lastBalanceAAByBBCloseTime = 0;
+         sessionPeakProfit = 0.0;
+         gongLaiMode = false;
+         trailingGocBuy = 0.0;
+         trailingGocSell = 0.0;
+         trailingSLPlaced = false;
+         lastBuyTrailPrice = 0.0;
+         lastSellTrailPrice = 0.0;
+         ClearBalanceSelection();
+         balancePrepareDirection = 0;
+
+         ScheduleRestartDelayAfterReset("Symmetric mirror reset");
+         if(eaStoppedByWeekday || eaStoppedByRestartDelay)
+            return;
+         if(!IsADXStartAllowed())
+         {
+            eaStoppedByAdx = true;
+            Print("Symmetric mirror reset: ADX condition not met. EA will wait to restart.");
+            if(EnableResetNotification || EnableTelegram)
+               SendResetNotification("Symmetric mirror + max loss: waiting for ADX start condition");
+            return;
+         }
+         if(!IsRSIStartAllowed())
+         {
+            eaStoppedByRsi = true;
+            Print("Symmetric mirror reset: RSI cross condition not met. EA will wait to restart.");
+            if(EnableResetNotification || EnableTelegram)
+               SendResetNotification("Symmetric mirror + max loss: waiting for RSI cross start condition");
+            return;
+         }
+
+         basePrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+         InitializeGridLevels();
+         Print("Symmetric mirror reset: same-side min ", SymmetricResetSameSideMinLevels,
+               " levels, opposite-side min ", SymmetricResetOppositeSideMinLevels,
+               " levels (gridStep=", gridStep, ")",
+               " pips, effective session P/L ", DoubleToString(effectiveSessionSym, 2),
+               " (raw=", DoubleToString(totalSessionSym, 2),
+               ", lockedSavings=", DoubleToString(sessionLockedProfit, 2),
+               ") >= floor -", DoubleToString(SymmetricResetMaxLossUSD, 2), " USD. New base = ", basePrice);
+         if(EnableResetNotification || EnableTelegram)
+            SendResetNotification("Symmetric mirror vs base + max loss OK — reset");
+         if(!eaStoppedByTarget && !eaStoppedBySchedule && !eaStoppedByAdx && !eaStoppedByRsi)
+            ManageGridOrders();
+         return;
       }
    }
    
