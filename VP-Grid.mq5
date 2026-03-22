@@ -175,9 +175,9 @@ input double RSIBalanceLower = 30.0;           // Price below base: require RSI 
 input group "=== 9.3 BALANCE ACROSS BASE (open, no TP) ==="
 input bool EnableBalanceOpenAcrossBaseNoTP = true; // Enable mode: use profitable NO-TP positions to offset losing NO-TP positions across the base line
 input double BalanceOpenAcrossBaseNoTP_XUSD = 20.0;  // Activation (USD): net P/L (sum of selected no-TP profits + opposite loser float) >= X
-input int BalanceOpenAcrossBaseNoTP_MaxPositiveOrders = 10; // Max profitable no-TP positions to combine when closing one opposite loss (1–15; search uses farthest 12 only)
+input int BalanceOpenAcrossBaseNoTP_MaxPositiveOrders = 20; // Max positives to combine: tries 1, then 2… up to this (1–20; pool search uses farthest 20 only)
 input double BalanceClosePairMinSurplusUSD = 20.0; // Per-close safety buffer (USD): net after pair close must leave at least X USD (approx. posPr + negPortion >= X)
-input int BalanceOpenAcrossBaseNoTP_MinDistanceLevels = 3; // Current price must be at least this many grid levels away from the base before balancing is allowed
+input int BalanceOpenAcrossBaseNoTP_MinDistanceLevels = 3; // 9.3: BID must be >= this many grid steps from base: |BID-base| >= N×gridStep (N≥1)
 input bool EnableBalanceNoTPCloseTP = true; // Enable mode: use profitable NO-TP positions to offset losing TP positions on the opposite side (only if no opposite-side NO-TP loser exists)
 
 //+------------------------------------------------------------------+
@@ -569,6 +569,7 @@ bool Balance93_AdvanceCombination(int &idx[], int k, int n)
 }
 
 // 9.3: combined no-TP profit USD vs one negative leg — net X, surplus, balance floor, min lot; sets portion & volume to close.
+// If one full negative close is not affordable, computes desiredPortion in (0,1] so the negative may be closed partially (volume rounded to lot step).
 bool Balance93_TryNegCloseParams(
    double xUSD,
    double combinedPosPr,
@@ -644,7 +645,30 @@ bool Balance93_TryNegCloseParams(
    return true;
 }
 
+// Every 9.3 tick: BID vs base line. Returns false if price is exactly at base (no side).
+// Same-side = open price on the same side of base as BID; opposite = the other side.
+bool Balance93_GetPriceSideVsBase(double &outBid, bool &outAbove, bool &outBelow)
+{
+   outBid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   outAbove = (outBid > basePrice);
+   outBelow = (outBid < basePrice);
+   return (outAbove || outBelow);
+}
+
+// 9.3 gate: current price (BID) must be at least N full grid steps from base (same N as BalanceOpenAcrossBaseNoTP_MinDistanceLevels).
+bool Balance93_PriceFarEnoughFromBaseFor93(double bid)
+{
+   if(gridStep <= 0)
+      return false;
+   int n = BalanceOpenAcrossBaseNoTP_MinDistanceLevels;
+   if(n < 1) n = 1;
+   double minDistPrice = gridStep * (double)n;
+   return (MathAbs(bid - basePrice) >= minDistPrice);
+}
+
 // Balance: close opposite-side losing positions (no TP) when same-side no-TP profit + opposite-side loss (USD) >= X.
+// Rule: only profitable no-TP legs whose OPEN PRICE is on the SAME side of base as current BID fund closes of
+// losing no-TP legs whose OPEN PRICE is on the OPPOSITE side (never same-side losses or opposite-side profits).
 // Per close: negative leg first (partial/full), then full positive leg; min net surplus USD reserved.
 bool BalanceOpenAcrossBaseNoTP(double xUSD)
 {
@@ -652,17 +676,12 @@ bool BalanceOpenAcrossBaseNoTP(double xUSD)
       return false;
    if(xUSD <= 0.0)
       return false;
-   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   bool priceAboveBase = (bid > basePrice);
-   bool priceBelowBase = (bid < basePrice);
-   if(!priceAboveBase && !priceBelowBase)
+   double bid;
+   bool priceAboveBase, priceBelowBase;
+   if(!Balance93_GetPriceSideVsBase(bid, priceAboveBase, priceBelowBase))
       return false;
 
-   // Distance condition: current price must be at least N grid steps away from base.
-   if(gridStep <= 0)
-      return false;
-   double minDistPrice = gridStep * (double)MathMax(1, BalanceOpenAcrossBaseNoTP_MinDistanceLevels);
-   if(MathAbs(bid - basePrice) < minDistPrice)
+   if(!Balance93_PriceFarEnoughFromBaseFor93(bid))
       return false;
 
    // Balance open positions (no TP) across base:
@@ -710,7 +729,7 @@ bool BalanceOpenAcrossBaseNoTP(double xUSD)
          continue;
 
       double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
-      // Only consider positions across base: "same side" and "opposite side" relative to current price
+      // Open price vs base must match BID side: profits only same-side, losses only opposite-side
       bool isSameSide = (priceAboveBase) ? (openPrice > basePrice) : (openPrice < basePrice);
       bool isOppSide  = (priceAboveBase) ? (openPrice < basePrice) : (openPrice > basePrice);
       if(!isSameSide && !isOppSide)
@@ -808,11 +827,13 @@ bool BalanceOpenAcrossBaseNoTP(double xUSD)
 
    int maxK = BalanceOpenAcrossBaseNoTP_MaxPositiveOrders;
    if(maxK < 1) maxK = 1;
-   if(maxK > 15) maxK = 15;
+   if(maxK > 20) maxK = 20;
    int poolN = pcnt;
-   if(poolN > 12)
-      poolN = 12;
+   if(poolN > 20)
+      poolN = 20;
 
+   // Greedy by count: try 1 same-side profit, then 2, … up to maxK (and pool cap). First feasible combo wins (minimum number of positives).
+   // Pool is sorted farthest-from-base first; combinations are lexicographic on indices 0..poolN-1.
    double desiredPortion = 0.0;
    double volClose = 0.0;
    int selIdx[];
@@ -909,10 +930,9 @@ bool BalanceOpenAcrossBaseNoTP(double xUSD)
    return anyClosed;
 }
 
-// Balance variant:
-// - Source: no TP, profitable (USD P/L), same side as price vs base; up to MaxPositiveOrders combined.
-// - Target: has TP, losing, opposite side. Guard: no losing no-TP on opposite side.
-// - Trigger: sum(selected sources)+tgtPr >= X; tgtPr negative float.
+// Balance variant (9.3): same rule as noTP/noTP — BID side vs base; sources = profitable no-TP same side as BID;
+// targets = losing with TP on opposite side. Guard: no losing no-TP on opposite side.
+// Trigger: sum(selected sources)+tgtPr >= X; tgtPr negative float.
 bool BalanceNoTPCloseTP(double xUSD)
 {
    if(!EnableBalanceNoTPCloseTP)
@@ -920,16 +940,12 @@ bool BalanceNoTPCloseTP(double xUSD)
    if(xUSD <= 0.0)
       return false;
 
-   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   bool priceAboveBase = (bid > basePrice);
-   bool priceBelowBase = (bid < basePrice);
-   if(!priceAboveBase && !priceBelowBase)
+   double bid;
+   bool priceAboveBase, priceBelowBase;
+   if(!Balance93_GetPriceSideVsBase(bid, priceAboveBase, priceBelowBase))
       return false;
 
-   if(gridStep <= 0)
-      return false;
-   double minDistPrice = gridStep * (double)MathMax(1, BalanceOpenAcrossBaseNoTP_MinDistanceLevels);
-   if(MathAbs(bid - basePrice) < minDistPrice)
+   if(!Balance93_PriceFarEnoughFromBaseFor93(bid))
       return false;
 
    ulong srcTickets[];
@@ -1098,11 +1114,12 @@ bool BalanceNoTPCloseTP(double xUSD)
 
    int maxK = BalanceOpenAcrossBaseNoTP_MaxPositiveOrders;
    if(maxK < 1) maxK = 1;
-   if(maxK > 15) maxK = 15;
+   if(maxK > 20) maxK = 20;
    int poolN = scnt;
-   if(poolN > 12)
-      poolN = 12;
+   if(poolN > 20)
+      poolN = 20;
 
+   // Same as noTP/noTP: k=1 then k=2 … first feasible set; partial close of losing TP leg when Balance93_TryNegCloseParams allows.
    double desiredPortion = 0.0;
    double volClose = 0.0;
    int selIdx[];
@@ -3240,9 +3257,9 @@ void DoBalanceAll()
    if(minCooldown > 0 && lastClose > 0 && (TimeCurrent() - lastClose) < minCooldown)
       return;
 
-   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   bool priceAboveBase = (bid > basePrice);
-   bool priceBelowBase = (bid < basePrice);
+   double bid;
+   bool priceAboveBase, priceBelowBase;
+   Balance93_GetPriceSideVsBase(bid, priceAboveBase, priceBelowBase);
 
    // New feature: balance open no-TP positions across base by +X/-X floating.
    if(EnableBalanceNoTPCloseTP && BalanceOpenAcrossBaseNoTP_XUSD > 0)
