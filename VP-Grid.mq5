@@ -43,9 +43,9 @@ input string CommentOrder = "VPGrid";           // Order comment (used for all m
 
 input group "--- 2.2 AA (virtual): BUY above base + SELL below base ---"
 input bool EnableAA = true;                     // AA: above base = virtual Buy (Buy Stop); below base = virtual Sell (Sell Stop)
-input double LotSizeAA = 0.01;                  // AA: Lot size level 1
-input ENUM_LOT_SCALE AALotScale = LOT_GEOMETRIC; // AA: Fixed / Geometric
-input double LotMultAA = 1.3;                   // AA: Lot multiplier for level 2+ (Geometric)
+input double LotSizeAA = 0.5;                   // AA: Lot size level 1
+input ENUM_LOT_SCALE AALotScale = LOT_FIXED;   // AA: Fixed / Geometric
+input double LotMultAA = 1.05;                  // AA: Lot multiplier for level 2+ (Geometric)
 input double MaxLotAA = 2.0;                    // AA: Max lot per order (0=no limit)
 input double TakeProfitPipsAA = 0.0;           // AA: Take profit (pips; 0=off)
 input bool EnableBalanceAAByBB = true;         // AA: Balance when (pool + loss) >= 20 USD; cooldown 300s. Prepare at 3 levels, execute at 5
@@ -60,12 +60,12 @@ input double TakeProfitPipsBB = 1500.0;         // BB: Take profit (pips; 0=off)
 input bool EnableBalanceBB = true;              // BB: Balance when (pool + loss) >= 20 USD; cooldown 300s. Prepare at 3 levels, execute at 5
 
 input group "--- 2.4 CC (virtual): BUY above base + SELL below base ---"
-input bool EnableCC = true;                      // CC: above base = virtual Buy; below base = virtual Sell
-input double LotSizeCC = 0.05;                    // CC: Lot size level 1
+input bool EnableCC = false;                     // CC: above base = virtual Buy; below base = virtual Sell
+input double LotSizeCC = 0.1;                   // CC: Lot size level 1
 input ENUM_LOT_SCALE CCLotScale = LOT_FIXED;     // CC: Fixed / Geometric
 input double LotMultCC = 1.3;                    // CC: Lot multiplier for level 2+ (Geometric)
 input double MaxLotCC = 2.0;                     // CC: Max lot per order (0=no limit)
-input double TakeProfitPipsCC = 1500.0;          // CC: Take profit (pips; 0=off)
+input double TakeProfitPipsCC = 0.0;             // CC: Take profit (pips; 0=off)
 input bool EnableBalanceCC = true;               // CC: Balance when (pool + loss) >= 20 USD; cooldown 300s. Prepare at 3 levels, execute at 5
 
 input group "--- 2.5 DD (virtual): SELL above base + BUY below base ---"
@@ -108,7 +108,7 @@ input string TelegramChatID = "";               // Group Chat ID (negative numbe
 
 input group "=== 6. LOCK PROFIT (Save %) ==="
 input bool EnableLockProfit = true;            // Lock profit: reserve X% of each profitable TP close (AA, BB, CC, DD)
-input double LockProfitPct = 25.0;             // Lock this % of each profitable close (e.g., 25 = reserve 25 USD from 100 USD profit)
+input double LockProfitPct = 25.0;             // Lock this % of each profitable close (e.g., 25 = reserve 25 USD)
 
 //+------------------------------------------------------------------+
 //| 7. DAILY STOP                                                      |
@@ -175,7 +175,7 @@ input double RSIBalanceLower = 30.0;           // Price below base: require RSI 
 input group "=== 9.3 BALANCE ACROSS BASE (open, no TP) ==="
 input bool EnableBalanceOpenAcrossBaseNoTP = true; // Enable mode: use profitable NO-TP positions to offset losing NO-TP positions across the base line
 input double BalanceOpenAcrossBaseNoTP_XUSD = 20.0;  // Activation (USD): net P/L (sum of selected no-TP profits + opposite loser float) >= X
-input int BalanceOpenAcrossBaseNoTP_MaxPositiveOrders = 2; // Max profitable no-TP positions to combine when closing one opposite loss (1–15; search uses farthest 12 only)
+input int BalanceOpenAcrossBaseNoTP_MaxPositiveOrders = 5; // Max profitable no-TP positions to combine when closing one opposite loss (1–15; search uses farthest 12 only)
 input double BalanceClosePairMinSurplusUSD = 20.0; // Per-close safety buffer (USD): net after pair close must leave at least X USD (approx. posPr + negPortion >= X)
 input int BalanceOpenAcrossBaseNoTP_MinDistanceLevels = 3; // Current price must be at least this many grid levels away from the base before balancing is allowed
 input bool EnableBalanceNoTPCloseTP = true; // Enable mode: use profitable NO-TP positions to offset losing TP positions on the opposite side (only if no opposite-side NO-TP loser exists)
