@@ -43,7 +43,7 @@ input string CommentOrder = "VPGrid";           // Order comment (used for all m
 
 input group "--- 2.2 AA (virtual): BUY above base + SELL below base ---"
 input bool EnableAA = true;                     // AA: above base = virtual Buy (Buy Stop); below base = virtual Sell (Sell Stop)
-input double LotSizeAA = 0.3;                   // AA: Lot size level 1
+input double LotSizeAA = 0.5;                   // AA: Lot size level 1
 input ENUM_LOT_SCALE AALotScale = LOT_FIXED;   // AA: Fixed / Geometric
 input double LotMultAA = 1.05;                  // AA: Lot multiplier for level 2+ (Geometric)
 input double MaxLotAA = 2.0;                    // AA: Max lot per order (0=no limit)
@@ -60,9 +60,9 @@ input double TakeProfitPipsBB = 1500.0;         // BB: Take profit (pips; 0=off)
 input bool EnableBalanceBB = true;              // BB: Balance when (pool + loss) >= 20 USD; cooldown 300s. Prepare at 3 levels, execute at 5
 
 input group "--- 2.4 CC (virtual): BUY above base + SELL below base ---"
-input bool EnableCC = false;                     // CC: above base = virtual Buy; below base = virtual Sell
-input double LotSizeCC = 0.1;                   // CC: Lot size level 1
-input ENUM_LOT_SCALE CCLotScale = LOT_FIXED;     // CC: Fixed / Geometric
+input bool EnableCC = true;                     // CC: above base = virtual Buy; below base = virtual Sell
+input double LotSizeCC = 0.01;                  // CC: Lot size level 1
+input ENUM_LOT_SCALE CCLotScale = LOT_GEOMETRIC; // CC: Fixed / Geometric
 input double LotMultCC = 1.3;                    // CC: Lot multiplier for level 2+ (Geometric)
 input double MaxLotCC = 2.0;                     // CC: Max lot per order (0=no limit)
 input double TakeProfitPipsCC = 0.0;             // CC: Take profit (pips; 0=off)
@@ -74,7 +74,7 @@ input double LotSizeDD = 0.01;                   // DD: Lot size level 1
 input ENUM_LOT_SCALE DDLotScale = LOT_FIXED;      // DD: Fixed / Geometric
 input double LotMultDD = 1.3;                    // DD: Lot multiplier for level 2+ (Geometric)
 input double MaxLotDD = 0.01;                    // DD: Max lot per order (0=no limit)
-input double TakeProfitPipsDD = 1000.0;          // DD: Take profit (pips; 0=off)
+input double TakeProfitPipsDD = 1500.0;          // DD: Take profit (pips; 0=off)
 
 //+------------------------------------------------------------------+
 //| 3. SESSION: Trailing profit (open orders only)                    |
@@ -107,7 +107,7 @@ input string TelegramBotToken = "";             // Bot Token (from @BotFather)
 input string TelegramChatID = "";               // Group Chat ID (negative number, e.g. -1001234567890)
 
 input group "=== 6. LOCK PROFIT (Save %) ==="
-input bool EnableLockProfit = true;            // Lock profit: reserve X% of each profitable TP close (AA, BB, CC, DD)
+input bool EnableLockProfit = true;            // Lock profit: reserve X% of each profitable TP close (AA, BB, CC)
 input double LockProfitPct = 25.0;             // Lock this % of each profitable close (e.g., 25 = reserve 25 USD)
 
 //+------------------------------------------------------------------+
@@ -201,7 +201,7 @@ input double SessionProfitTargetUSD = 500.0;    // Session target (USD)
 //+------------------------------------------------------------------+
 input group "=== 12. RESET WHEN LEVELS MATCH ==="
 input bool EnableResetWhenLevelsMatch = true;   // Reset EA when all 4 conditions below are met
-input double LevelMatchMinDistancePips = 5000.0; // X pips: require at least one open order above base and one below base, each at distance >= X pips
+input double LevelMatchMinDistancePips = 4000.0; // X pips: require at least one open order above base and one below base, each at distance >= X pips
 input double LevelMatchSessionTargetUSD = 20.0; // (3) Session P/L (closed + open) >= this USD. (4) Trailing total profit mode not active
 
 //+------------------------------------------------------------------+
