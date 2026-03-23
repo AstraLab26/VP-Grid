@@ -176,6 +176,7 @@ input group "=== 9.3 BALANCE ACROSS BASE (open, no TP) ==="
 input bool EnableBalanceOpenAcrossBaseNoTP = true; // Enable mode: use profitable NO-TP positions to offset losing NO-TP positions across the base line
 input double BalanceOpenAcrossBaseNoTP_XUSD = 20.0;  // Activation (USD): net P/L (sum of selected no-TP profits + opposite loser float) >= X
 input int BalanceOpenAcrossBaseNoTP_MaxPositiveOrders = 15; // Max positives to combine: tries 1, then 2… up to this (1–20; pool search uses farthest 20 only)
+input double BalanceOpenAcrossBaseNoTP_MinPositiveDistancePips = 1000.0; // 9.3: source positive order must be at least X pips away from current BID (0=off)
 input double BalanceClosePairMinSurplusUSD = 20.0; // Per-close safety buffer (USD): net after pair close must leave at least X USD (approx. posPr + negPortion >= X)
 input int BalanceOpenAcrossBaseNoTP_MinDistanceLevels = 3; // 9.3: BID must be >= this many grid steps from base: |BID-base| >= N×gridStep (N≥1)
 input bool EnableBalanceNoTPCloseTP = true; // Enable mode: use profitable NO-TP positions to offset losing TP positions on the opposite side (only if no opposite-side NO-TP loser exists)
@@ -648,7 +649,9 @@ bool Balance93_TryNegCloseParams(
    if(absLoss <= 0.0)
       return false;
 
-   if(combinedPosPr + negPr < xUSD)
+   // For partial close, activation X applies to net AFTER the partial loss portion:
+   // combinedPosPr + negPr * portion >= xUSD  (negPr < 0)
+   if(combinedPosPr <= xUSD)
       return false;
 
    if(combinedPosPr <= minSurplusUsd)
@@ -657,6 +660,10 @@ bool Balance93_TryNegCloseParams(
    double desiredPortion = combinedPosPr / absLoss;
    if(desiredPortion > 1.0) desiredPortion = 1.0;
    if(desiredPortion < 0.0) desiredPortion = 0.0;
+   double ratioAllowedByActivation = (combinedPosPr - xUSD) / absLoss;
+   if(ratioAllowedByActivation < 0.0) ratioAllowedByActivation = 0.0;
+   if(ratioAllowedByActivation > 1.0) ratioAllowedByActivation = 1.0;
+   desiredPortion = MathMin(desiredPortion, ratioAllowedByActivation);
    double ratioAllowedByUsdSurplus = (combinedPosPr - minSurplusUsd) / absLoss;
    if(ratioAllowedByUsdSurplus < 0.0) ratioAllowedByUsdSurplus = 0.0;
    if(ratioAllowedByUsdSurplus > 1.0) ratioAllowedByUsdSurplus = 1.0;
@@ -745,6 +752,11 @@ bool BalanceOpenAcrossBaseNoTP(double xUSD)
    if(!Balance93_PriceFarEnoughFromBaseFor93(bid))
       return false;
 
+   int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   double pipSize = (digits == 5 || digits == 3) ? (point * 10.0) : point;
+   double minPositiveDistancePrice = MathMax(0.0, BalanceOpenAcrossBaseNoTP_MinPositiveDistancePips) * pipSize;
+
    // Balance open positions (no TP) across base:
    // Activation: sum(selected no-TP profits)+negPr >= X; try group sizes 1..MaxPositiveOrders (farthest-first combos).
    //
@@ -803,6 +815,8 @@ bool BalanceOpenAcrossBaseNoTP(double xUSD)
       double pr = GetPositionPnL(ticket); // profit+swap (USD account terms)
       if(isSameSide && pr > 0.0)
       {
+         if(minPositiveDistancePrice > 0.0 && MathAbs(bid - openPrice) < minPositiveDistancePrice)
+            continue;
          int n = ArraySize(posTickets);
          ArrayResize(posTickets, n + 1);
          ArrayResize(posPls, n + 1);
@@ -893,8 +907,8 @@ bool BalanceOpenAcrossBaseNoTP(double xUSD)
    if(poolN > 20)
       poolN = 20;
 
-   // Greedy by count: try 1 same-side profit, then 2, … up to maxK (and pool cap). First feasible combo wins (minimum number of positives).
-   // Pool is sorted farthest-from-base first; combinations are lexicographic on indices 0..poolN-1.
+  // Use maximum total positive funding for one negative leg:
+  // select up to maxK positives with highest floating profit, then compute full/partial negative close.
    double desiredPortion = 0.0;
    double volClose = 0.0;
    int selIdx[];
@@ -902,31 +916,43 @@ bool BalanceOpenAcrossBaseNoTP(double xUSD)
    int selCount = 0;
    bool found = false;
 
-   for(int k = 1; k <= maxK && k <= poolN && !found; k++)
-   {
-      int idx[];
-      ArrayResize(idx, k);
-      for(int z = 0; z < k; z++)
-         idx[z] = z;
+  int useK = maxK;
+  if(useK > poolN) useK = poolN;
+  if(useK < 1) useK = 1;
 
-      while(true)
-      {
-         double sumPr = 0.0;
-         for(int z = 0; z < k; z++)
-            sumPr += posPls[idx[z]];
-         if(Balance93_TryNegCloseParams(xUSD, sumPr, negPr, negVol, minSurplusUsd, balanceFloor, balanceNow, desiredPortion, volClose))
-         {
-            ArrayResize(selIdx, k);
-            for(int z = 0; z < k; z++)
-               selIdx[z] = idx[z];
-            selCount = k;
-            found = true;
-            break;
-         }
-         if(!Balance93_AdvanceCombination(idx, k, poolN))
-            break;
-      }
-   }
+  int rankIdx[];
+  ArrayResize(rankIdx, poolN);
+  for(int i = 0; i < poolN; i++)
+     rankIdx[i] = i;
+  for(int i = 0; i < poolN - 1; i++)
+     for(int j = i + 1; j < poolN; j++)
+        if(posPls[rankIdx[j]] > posPls[rankIdx[i]])
+        {
+           int t = rankIdx[i];
+           rankIdx[i] = rankIdx[j];
+           rankIdx[j] = t;
+        }
+
+  // Do not wait for exactly maxK orders: if available < maxK, use available;
+  // and if needed, try fewer positives (K down to 1).
+  for(int k = useK; k >= 1 && !found; k--)
+  {
+     double sumPr = 0.0;
+     ArrayResize(selIdx, k);
+     for(int z = 0; z < k; z++)
+     {
+        selIdx[z] = rankIdx[z];
+        sumPr += posPls[selIdx[z]];
+     }
+     // Strict mode first (activation X + surplus), then relaxed fallback:
+     // always try to close at least part of one farthest losing leg.
+     if(Balance93_TryNegCloseParams(xUSD, sumPr, negPr, negVol, minSurplusUsd, balanceFloor, balanceNow, desiredPortion, volClose) ||
+        Balance93_TryNegCloseParams(0.0, sumPr, negPr, negVol, 0.0, balanceFloor, balanceNow, desiredPortion, volClose))
+     {
+        selCount = k;
+        found = true;
+     }
+  }
    if(!found || selCount <= 0)
       return false;
 
@@ -1009,6 +1035,11 @@ bool BalanceNoTPCloseTP(double xUSD)
    if(!Balance93_PriceFarEnoughFromBaseFor93(bid))
       return false;
 
+   int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   double pipSize = (digits == 5 || digits == 3) ? (point * 10.0) : point;
+   double minPositiveDistancePrice = MathMax(0.0, BalanceOpenAcrossBaseNoTP_MinPositiveDistancePips) * pipSize;
+
    ulong srcTickets[];
    double srcPls[];
    double srcVols[];
@@ -1072,6 +1103,8 @@ bool BalanceNoTPCloseTP(double xUSD)
 
       if(tp <= 0.0 && sameSideAsPrice && pr > 0.0)
       {
+         if(minPositiveDistancePrice > 0.0 && MathAbs(bid - openPrice) < minPositiveDistancePrice)
+            continue;
          int n = ArraySize(srcTickets);
          ArrayResize(srcTickets, n + 1);
          ArrayResize(srcPls, n + 1);
@@ -1180,7 +1213,8 @@ bool BalanceNoTPCloseTP(double xUSD)
    if(poolN > 20)
       poolN = 20;
 
-   // Same as noTP/noTP: k=1 then k=2 … first feasible set; partial close of losing TP leg when Balance93_TryNegCloseParams allows.
+  // Use maximum total positive funding for one losing TP target:
+  // select up to maxK no-TP sources with highest floating profit, then compute full/partial target close.
    double desiredPortion = 0.0;
    double volClose = 0.0;
    int selIdx[];
@@ -1188,31 +1222,43 @@ bool BalanceNoTPCloseTP(double xUSD)
    int selCount = 0;
    bool found = false;
 
-   for(int k = 1; k <= maxK && k <= poolN && !found; k++)
-   {
-      int idx[];
-      ArrayResize(idx, k);
-      for(int z = 0; z < k; z++)
-         idx[z] = z;
+  int useK = maxK;
+  if(useK > poolN) useK = poolN;
+  if(useK < 1) useK = 1;
 
-      while(true)
-      {
-         double sumPr = 0.0;
-         for(int z = 0; z < k; z++)
-            sumPr += srcPls[idx[z]];
-         if(Balance93_TryNegCloseParams(xUSD, sumPr, tgtPr, tgtVol, minSurplusUsd, balanceFloor, balanceNow, desiredPortion, volClose))
-         {
-            ArrayResize(selIdx, k);
-            for(int z = 0; z < k; z++)
-               selIdx[z] = idx[z];
-            selCount = k;
-            found = true;
-            break;
-         }
-         if(!Balance93_AdvanceCombination(idx, k, poolN))
-            break;
-      }
-   }
+  int rankIdx[];
+  ArrayResize(rankIdx, poolN);
+  for(int i = 0; i < poolN; i++)
+     rankIdx[i] = i;
+  for(int i = 0; i < poolN - 1; i++)
+     for(int j = i + 1; j < poolN; j++)
+        if(srcPls[rankIdx[j]] > srcPls[rankIdx[i]])
+        {
+           int t = rankIdx[i];
+           rankIdx[i] = rankIdx[j];
+           rankIdx[j] = t;
+        }
+
+  // Do not wait for exactly maxK orders: if available < maxK, use available;
+  // and if needed, try fewer positives (K down to 1).
+  for(int k = useK; k >= 1 && !found; k--)
+  {
+     double sumPr = 0.0;
+     ArrayResize(selIdx, k);
+     for(int z = 0; z < k; z++)
+     {
+        selIdx[z] = rankIdx[z];
+        sumPr += srcPls[selIdx[z]];
+     }
+     // Strict mode first (activation X + surplus), then relaxed fallback:
+     // always try to close at least part of one farthest losing target.
+     if(Balance93_TryNegCloseParams(xUSD, sumPr, tgtPr, tgtVol, minSurplusUsd, balanceFloor, balanceNow, desiredPortion, volClose) ||
+        Balance93_TryNegCloseParams(0.0, sumPr, tgtPr, tgtVol, 0.0, balanceFloor, balanceNow, desiredPortion, volClose))
+     {
+        selCount = k;
+        found = true;
+     }
+  }
    if(!found || selCount <= 0)
       return false;
 
