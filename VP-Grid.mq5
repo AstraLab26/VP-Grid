@@ -176,6 +176,7 @@ input group "=== 9.3 BALANCE ACROSS BASE (open, no TP) ==="
 input bool EnableBalanceOpenAcrossBaseNoTP = true; // Enable mode: use profitable NO-TP positions to offset losing NO-TP positions across the base line
 input double BalanceOpenAcrossBaseNoTP_XUSD = 20.0;  // Activation (USD): net P/L (sum of selected no-TP profits + opposite loser float) >= X
 input int BalanceOpenAcrossBaseNoTP_MaxPositiveOrders = 15; // Max positives to combine: tries 1, then 2… up to this (1–20; pool search uses farthest 20 only)
+input int BalanceOpenAcrossBaseNoTP_MinPositiveOrders = 1; // 9.3: minimum number of positive source orders required before closing opposite losing order (1–20)
 input double BalanceOpenAcrossBaseNoTP_MinPositiveDistancePips = 1000.0; // 9.3: source positive order must be at least X pips away from current BID (0=off)
 input double BalanceClosePairMinSurplusUSD = 20.0; // Per-close safety buffer (USD): net after pair close must leave at least X USD (approx. posPr + negPortion >= X)
 input int BalanceOpenAcrossBaseNoTP_MinDistanceLevels = 3; // 9.3: BID must be >= this many grid steps from base: |BID-base| >= N×gridStep (N≥1)
@@ -729,7 +730,8 @@ bool Balance93_PriceFarEnoughFromBaseFor93(double bid)
    if(gridStep <= 0)
       return false;
    int n = BalanceOpenAcrossBaseNoTP_MinDistanceLevels;
-   if(n < 1) n = 1;
+   if(n <= 0)
+      return true; // 0 = disable this gate
    double minDistPrice = gridStep * (double)n;
    return (MathAbs(bid - basePrice) >= minDistPrice);
 }
@@ -742,8 +744,8 @@ bool BalanceOpenAcrossBaseNoTP(double xUSD)
 {
    if(!EnableBalanceOpenAcrossBaseNoTP)
       return false;
-   if(xUSD <= 0.0)
-      return false;
+   if(xUSD < 0.0)
+      xUSD = 0.0;
    double bid;
    bool priceAboveBase, priceBelowBase;
    if(!Balance93_GetPriceSideVsBase(bid, priceAboveBase, priceBelowBase))
@@ -888,14 +890,6 @@ bool BalanceOpenAcrossBaseNoTP(double xUSD)
          }
       }
 
-   // Top negative (farthest); search 1..maxK no-TP profits (combinations, smallest k first, lexicographic on sorted list).
-   ulong negTicket = negTickets[0];
-   int negType = negTypes[0];
-   double negPr = negPls[0]; // negative
-   double negVol = negVols[0];
-   if(negPr >= 0.0)
-      return false;
-
    double minSurplusUsd = MathMax(0.0, BalanceClosePairMinSurplusUSD);
    double balanceFloor = sessionStartBalance + lockedProfitReserve;
    double balanceNow = AccountInfoDouble(ACCOUNT_BALANCE);
@@ -903,12 +897,43 @@ bool BalanceOpenAcrossBaseNoTP(double xUSD)
    int maxK = BalanceOpenAcrossBaseNoTP_MaxPositiveOrders;
    if(maxK < 1) maxK = 1;
    if(maxK > 20) maxK = 20;
+   int minK = BalanceOpenAcrossBaseNoTP_MinPositiveOrders;
+   if(minK < 1) minK = 1;
+   if(minK > 20) minK = 20;
    int poolN = pcnt;
    if(poolN > 20)
       poolN = 20;
+   if(poolN < minK)
+      return false;
 
-  // Use maximum total positive funding for one negative leg:
-  // select up to maxK positives with highest floating profit, then compute full/partial negative close.
+   int rankIdx[];
+   ArrayResize(rankIdx, poolN);
+   for(int i = 0; i < poolN; i++)
+      rankIdx[i] = i;
+   for(int i = 0; i < poolN - 1; i++)
+      for(int j = i + 1; j < poolN; j++)
+         if(posPls[rankIdx[j]] > posPls[rankIdx[i]])
+         {
+            int t = rankIdx[i];
+            rankIdx[i] = rankIdx[j];
+            rankIdx[j] = t;
+         }
+
+   double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   int useKBase = maxK;
+   if(useKBase > poolN) useKBase = poolN;
+   if(useKBase < 1) useKBase = 1;
+   if(useKBase < minK)
+      return false;
+
+   // Always target the farthest opposite losing order first.
+   ulong negTicket = negTickets[0];
+   int negType = negTypes[0];
+   double negPr = negPls[0];
+   double negVol = negVols[0];
+   if(negPr >= 0.0)
+      return false;
+
    double desiredPortion = 0.0;
    double volClose = 0.0;
    int selIdx[];
@@ -916,43 +941,24 @@ bool BalanceOpenAcrossBaseNoTP(double xUSD)
    int selCount = 0;
    bool found = false;
 
-  int useK = maxK;
-  if(useK > poolN) useK = poolN;
-  if(useK < 1) useK = 1;
-
-  int rankIdx[];
-  ArrayResize(rankIdx, poolN);
-  for(int i = 0; i < poolN; i++)
-     rankIdx[i] = i;
-  for(int i = 0; i < poolN - 1; i++)
-     for(int j = i + 1; j < poolN; j++)
-        if(posPls[rankIdx[j]] > posPls[rankIdx[i]])
-        {
-           int t = rankIdx[i];
-           rankIdx[i] = rankIdx[j];
-           rankIdx[j] = t;
-        }
-
-  // Do not wait for exactly maxK orders: if available < maxK, use available;
-  // and if needed, try fewer positives (K down to 1).
-  for(int k = useK; k >= 1 && !found; k--)
-  {
-     double sumPr = 0.0;
-     ArrayResize(selIdx, k);
-     for(int z = 0; z < k; z++)
-     {
-        selIdx[z] = rankIdx[z];
-        sumPr += posPls[selIdx[z]];
-     }
-     // Strict mode first (activation X + surplus), then relaxed fallback:
-     // always try to close at least part of one farthest losing leg.
-     if(Balance93_TryNegCloseParams(xUSD, sumPr, negPr, negVol, minSurplusUsd, balanceFloor, balanceNow, desiredPortion, volClose) ||
-        Balance93_TryNegCloseParams(0.0, sumPr, negPr, negVol, 0.0, balanceFloor, balanceNow, desiredPortion, volClose))
-     {
-        selCount = k;
-        found = true;
-     }
-  }
+   // Do not wait for exactly maxK orders: if available < maxK, use available;
+   // and if needed, try fewer positives (K down to 1).
+   for(int k = useKBase; k >= minK && !found; k--)
+   {
+      double sumPr = 0.0;
+      ArrayResize(selIdx, k);
+      for(int z = 0; z < k; z++)
+      {
+         selIdx[z] = rankIdx[z];
+         sumPr += posPls[selIdx[z]];
+      }
+      if(Balance93_TryNegCloseParams(xUSD, sumPr, negPr, negVol, minSurplusUsd, balanceFloor, balanceNow, desiredPortion, volClose) ||
+         Balance93_TryNegCloseParams(0.0, sumPr, negPr, negVol, 0.0, balanceFloor, balanceNow, desiredPortion, volClose))
+      {
+         selCount = k;
+         found = true;
+      }
+   }
    if(!found || selCount <= 0)
       return false;
 
@@ -965,10 +971,6 @@ bool BalanceOpenAcrossBaseNoTP(double xUSD)
             selIdx[b] = t;
          }
 
-   bool anyClosed = false;
-   double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
-
-   // Close negative first (full/partial), then each selected profit leg (full), farthest-first order.
    bool negOk = false;
    double negRealized = 0.0;
    if(desiredPortion >= 0.999 || volClose >= (negVol - lotStep * 0.5))
@@ -1007,14 +1009,12 @@ bool BalanceOpenAcrossBaseNoTP(double xUSD)
          return false;
       }
       sessionClosedProfitRemaining += posPls[si];
-      anyClosed = true;
       int pt = posTypes[si];
       if(pt == 0) lastBalanceAAByBBCloseTime = TimeCurrent();
       else if(pt == 1) lastBalanceBBCloseTime = TimeCurrent();
       else if(pt == 2) lastBalanceCCCloseTime = TimeCurrent();
    }
-
-   return anyClosed;
+   return true;
 }
 
 // Balance variant (9.3): same rule as noTP/noTP — BID side vs base; sources = profitable no-TP same side as BID;
@@ -1024,8 +1024,8 @@ bool BalanceNoTPCloseTP(double xUSD)
 {
    if(!EnableBalanceNoTPCloseTP)
       return false;
-   if(xUSD <= 0.0)
-      return false;
+   if(xUSD < 0.0)
+      xUSD = 0.0;
 
    double bid;
    bool priceAboveBase, priceBelowBase;
@@ -1182,26 +1182,6 @@ bool BalanceNoTPCloseTP(double xUSD)
          }
       }
 
-   // First target across base from farthest no-TP source (index 0 after sort).
-   int tgtIdx = -1;
-   for(int ti = 0; ti < ArraySize(tgtTickets); ti++)
-   {
-      if(srcAboveBase[0] != tgtAboveBase[ti])
-      {
-         tgtIdx = ti;
-         break;
-      }
-   }
-   if(tgtIdx < 0)
-      return false;
-
-   ulong tgtTicket = tgtTickets[tgtIdx];
-   int tgtType = tgtTypes[tgtIdx];
-   double tgtPr = tgtPls[tgtIdx]; // negative
-   double tgtVol = tgtVols[tgtIdx];
-   if(tgtPr >= 0.0)
-      return false;
-
    double minSurplusUsd = MathMax(0.0, BalanceClosePairMinSurplusUSD);
    double balanceFloor = sessionStartBalance + lockedProfitReserve;
    double balanceNow = AccountInfoDouble(ACCOUNT_BALANCE);
@@ -1209,12 +1189,43 @@ bool BalanceNoTPCloseTP(double xUSD)
    int maxK = BalanceOpenAcrossBaseNoTP_MaxPositiveOrders;
    if(maxK < 1) maxK = 1;
    if(maxK > 20) maxK = 20;
+   int minK = BalanceOpenAcrossBaseNoTP_MinPositiveOrders;
+   if(minK < 1) minK = 1;
+   if(minK > 20) minK = 20;
    int poolN = scnt;
    if(poolN > 20)
       poolN = 20;
+   if(poolN < minK)
+      return false;
 
-  // Use maximum total positive funding for one losing TP target:
-  // select up to maxK no-TP sources with highest floating profit, then compute full/partial target close.
+   int rankIdx[];
+   ArrayResize(rankIdx, poolN);
+   for(int i = 0; i < poolN; i++)
+      rankIdx[i] = i;
+   for(int i = 0; i < poolN - 1; i++)
+      for(int j = i + 1; j < poolN; j++)
+         if(srcPls[rankIdx[j]] > srcPls[rankIdx[i]])
+         {
+            int t = rankIdx[i];
+            rankIdx[i] = rankIdx[j];
+            rankIdx[j] = t;
+         }
+
+   double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   int useKBase = maxK;
+   if(useKBase > poolN) useKBase = poolN;
+   if(useKBase < 1) useKBase = 1;
+   if(useKBase < minK)
+      return false;
+
+   // Always target the farthest opposite losing TP order first.
+   ulong tgtTicket = tgtTickets[0];
+   int tgtType = tgtTypes[0];
+   double tgtPr = tgtPls[0];
+   double tgtVol = tgtVols[0];
+   if(tgtPr >= 0.0)
+      return false;
+
    double desiredPortion = 0.0;
    double volClose = 0.0;
    int selIdx[];
@@ -1222,43 +1233,24 @@ bool BalanceNoTPCloseTP(double xUSD)
    int selCount = 0;
    bool found = false;
 
-  int useK = maxK;
-  if(useK > poolN) useK = poolN;
-  if(useK < 1) useK = 1;
-
-  int rankIdx[];
-  ArrayResize(rankIdx, poolN);
-  for(int i = 0; i < poolN; i++)
-     rankIdx[i] = i;
-  for(int i = 0; i < poolN - 1; i++)
-     for(int j = i + 1; j < poolN; j++)
-        if(srcPls[rankIdx[j]] > srcPls[rankIdx[i]])
-        {
-           int t = rankIdx[i];
-           rankIdx[i] = rankIdx[j];
-           rankIdx[j] = t;
-        }
-
-  // Do not wait for exactly maxK orders: if available < maxK, use available;
-  // and if needed, try fewer positives (K down to 1).
-  for(int k = useK; k >= 1 && !found; k--)
-  {
-     double sumPr = 0.0;
-     ArrayResize(selIdx, k);
-     for(int z = 0; z < k; z++)
-     {
-        selIdx[z] = rankIdx[z];
-        sumPr += srcPls[selIdx[z]];
-     }
-     // Strict mode first (activation X + surplus), then relaxed fallback:
-     // always try to close at least part of one farthest losing target.
-     if(Balance93_TryNegCloseParams(xUSD, sumPr, tgtPr, tgtVol, minSurplusUsd, balanceFloor, balanceNow, desiredPortion, volClose) ||
-        Balance93_TryNegCloseParams(0.0, sumPr, tgtPr, tgtVol, 0.0, balanceFloor, balanceNow, desiredPortion, volClose))
-     {
-        selCount = k;
-        found = true;
-     }
-  }
+   // Do not wait for exactly maxK orders: if available < maxK, use available;
+   // and if needed, try fewer positives (K down to 1).
+   for(int k = useKBase; k >= minK && !found; k--)
+   {
+      double sumPr = 0.0;
+      ArrayResize(selIdx, k);
+      for(int z = 0; z < k; z++)
+      {
+         selIdx[z] = rankIdx[z];
+         sumPr += srcPls[selIdx[z]];
+      }
+      if(Balance93_TryNegCloseParams(xUSD, sumPr, tgtPr, tgtVol, minSurplusUsd, balanceFloor, balanceNow, desiredPortion, volClose) ||
+         Balance93_TryNegCloseParams(0.0, sumPr, tgtPr, tgtVol, 0.0, balanceFloor, balanceNow, desiredPortion, volClose))
+      {
+         selCount = k;
+         found = true;
+      }
+   }
    if(!found || selCount <= 0)
       return false;
 
@@ -1271,10 +1263,6 @@ bool BalanceNoTPCloseTP(double xUSD)
             selIdx[b] = t;
          }
 
-   bool anyClosed = false;
-   double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
-
-   // Close losing TP leg first (full/partial), then each selected no-TP source (full).
    bool tgtOk = false;
    double tgtRealized = 0.0;
    if(desiredPortion >= 0.999 || volClose >= (tgtVol - lotStep * 0.5))
@@ -1313,14 +1301,12 @@ bool BalanceNoTPCloseTP(double xUSD)
          return false;
       }
       sessionClosedProfitRemaining += srcPls[si];
-      anyClosed = true;
       int st = srcTypes[si];
       if(st == 0) lastBalanceAAByBBCloseTime = TimeCurrent();
       else if(st == 1) lastBalanceBBCloseTime = TimeCurrent();
       else if(st == 2) lastBalanceCCCloseTime = TimeCurrent();
    }
-
-   return anyClosed;
+   return true;
 }
 
 bool ScheduleRestartDelayAfterReset(const string reason)
@@ -3414,11 +3400,12 @@ void DoBalanceAll()
    bool anyBalance = (EnableAA && EnableBalanceAAByBB && BALANCE_THRESHOLD_USD_DEFAULT > 0) ||
                      (EnableBB && EnableBalanceBB && BALANCE_THRESHOLD_USD_DEFAULT > 0) ||
                      (EnableCC && EnableBalanceCC && BALANCE_THRESHOLD_USD_DEFAULT > 0) ||
-                     (EnableBalanceOpenAcrossBaseNoTP && BalanceOpenAcrossBaseNoTP_XUSD > 0) ||
-                     (EnableBalanceNoTPCloseTP && BalanceOpenAcrossBaseNoTP_XUSD > 0);
+                     EnableBalanceOpenAcrossBaseNoTP ||
+                     EnableBalanceNoTPCloseTP;
    if(!anyBalance)
       return;
-   if(sessionClosedProfitRemaining < 0)
+   bool has93 = (EnableBalanceOpenAcrossBaseNoTP || EnableBalanceNoTPCloseTP);
+   if(sessionClosedProfitRemaining < 0 && !has93)
       return;
    int minCooldown = 0;
    if(EnableAA && EnableBalanceAAByBB && BALANCE_THRESHOLD_USD_DEFAULT > 0 && BALANCE_COOLDOWN_SEC_DEFAULT > 0)
@@ -3440,14 +3427,14 @@ void DoBalanceAll()
    Balance93_GetPriceSideVsBase(bid, priceAboveBase, priceBelowBase);
 
    // New feature: balance open no-TP positions across base by +X/-X floating.
-   if(EnableBalanceNoTPCloseTP && BalanceOpenAcrossBaseNoTP_XUSD > 0)
+   if(EnableBalanceNoTPCloseTP)
    {
-      if(BalanceNoTPCloseTP(BalanceOpenAcrossBaseNoTP_XUSD))
+      if(BalanceNoTPCloseTP(MathMax(0.0, BalanceOpenAcrossBaseNoTP_XUSD)))
          return;
    }
-   if(EnableBalanceOpenAcrossBaseNoTP && BalanceOpenAcrossBaseNoTP_XUSD > 0)
+   if(EnableBalanceOpenAcrossBaseNoTP)
    {
-      if(BalanceOpenAcrossBaseNoTP(BalanceOpenAcrossBaseNoTP_XUSD))
+      if(BalanceOpenAcrossBaseNoTP(MathMax(0.0, BalanceOpenAcrossBaseNoTP_XUSD)))
          return;
    }
    // Keep RSI balance filter for legacy balance modes only.
